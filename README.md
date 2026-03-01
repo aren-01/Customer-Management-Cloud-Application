@@ -1,4 +1,4 @@
-![](./images/image1.jpeg){width="6.25in" height="6.575in"} Based on a
+![](./images/image1.jpeg) Based on a
 healthcare system scenario, this AWS architecture shows how to connect
 and use the application in the cloud.
 
@@ -16,8 +16,7 @@ Credentials are stored in AWS Secrets Manager. In case of failure in one
 region, the on-premises server can connect to another region via AWS
 Transit Gateway.
 
-![](./images/image2.jpeg){width="6.266666666666667in"
-height="5.716666666666667in"}
+![](./images/image2.jpeg)
 
 In this project, I focused on the system shown above. This is a
 simplified version of the first architecture, and it includes an
@@ -34,8 +33,7 @@ Step-by-step guidance is below.
 3.  Create an ECR repository. CloudFormation will prompt you for the
     repository URL.
 
-> ![](./images/image3.png){width="5.858333333333333in"
-> height="3.5056528871391075in"}
+> ![](./images/image3.png)
 
 4.  Install and configure the AWS CLI on the local machine.
 
@@ -62,8 +60,7 @@ docker push
 
 9.  Fill the parameters as shown in the screenshot below.
 
-> ![](./images/image4.png){width="6.266666666666667in"
-> height="4.791666666666667in"}
+> ![](./images/image4.png)
 
 10. Start deploying the stack and wait until it finishes. If there is no
     EC2 key pair, create one.
@@ -104,4 +101,4 @@ mysql -h \<RDS-ENDPOINT\> -u admin -p
     or add data. To delete the system, simply delete the CloudFormation
     stack.
 
-![](./images/image5.png){width="6.266666666666667in" height="3.15in"}
+![](./images/image5.png)
