@@ -1,12 +1,13 @@
 <?php
 
 
-$DB_HOST = "mysql";
-$DB_USER = "root";
-$DB_PASS = "aplusfamily";
-$DB_NAME = "db_health";
+$servername = getenv('DB_HOST');
+$username = getenv('DB_USER');
+$password = getenv('DB_PASS');
+$dbname   = getenv('DB_NAME');
+$port     = getenv('DB_PORT');
 
-$con = new mysqli($DB_HOST, $DB_USER, $DB_PASS, $DB_NAME);
+$conn = new mysqli($servername, $username, $password, $dbname, $port);
 
  
  $tables = array();
