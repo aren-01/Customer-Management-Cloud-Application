@@ -40,7 +40,6 @@ Step-by-step guidance is below.
 5.  Authenticate Docker with Amazon ECR.
 ```bash
 aws ecr get-login-password \--region us-east-1 \|
-
 docker login \--username AWS \--password-stdin
 \<ACCOUNT_ID\>.dkr.ecr.us-east-1.amazonaws.com
 ```
@@ -94,7 +93,7 @@ ec2-user@\<EC2-PUBLIC-IP\>:/home/ec2-user/
 ```
 18. Import the SQL file into the RDS database.
 ```bash
-> mysql -h \<RDS-ENDPOINT\> -u admin -p healthcaredb \< db_health.sql
+mysql -h \<RDS-ENDPOINT\> -u admin -p healthcaredb \< db_health.sql
 ```
 19. The application should now be available through the Application Load
     Balancer's HTTP listener. You can access the admin panel to modify
