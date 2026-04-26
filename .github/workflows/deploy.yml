@@ -2,12 +2,16 @@ name: Deploy Customer Management App
 
 on:
   workflow_dispatch:
-
+permissions:
+  id-token: write  
+  contents: read    
+  
 env:
   COMPOSE_PROJECT_NAME: app
   LOCAL_IMAGE_NAME: app-app:latest
   ECR_REPOSITORY_NAME: customermanagementapp
   DB_SQL_FILE: db/db_health.sql
+
 
 jobs:
   create-ecr:
