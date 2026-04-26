@@ -1,9 +1,6 @@
 name: Deploy Customer Management App
 
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
 
 env:
@@ -203,14 +200,14 @@ jobs:
             local params_file="$1"
             shift
             python3 - "$params_file" "$@" <<'PY'
-import json
-import sys
+          import json
+          import sys
 
-params_file = sys.argv[1]
-commands = list(sys.argv[2:])
-with open(params_file, "w", encoding="utf-8") as f:
-    json.dump({"commands": commands}, f)
-PY
+          params_file = sys.argv[1]
+          commands = list(sys.argv[2:])
+          with open(params_file, "w", encoding="utf-8") as f:
+              json.dump({"commands": commands}, f)
+          PY
           }
 
           upload_file_to_ec2() {
@@ -230,18 +227,18 @@ PY
 
             for chunk in "$tmp_dir"/chunk_*; do
               python3 - "$chunk" "$remote_b64" "$tmp_dir/append.json" <<'PY'
-import json
-import pathlib
-import sys
+          import json
+          import pathlib
+          import sys
 
-chunk_file = pathlib.Path(sys.argv[1])
-remote_b64 = sys.argv[2]
-params_file = sys.argv[3]
-content = chunk_file.read_text(encoding="utf-8")
-command = f"cat >> '{remote_b64}' <<'EOF'\n{content}\nEOF"
-with open(params_file, "w", encoding="utf-8") as f:
-    json.dump({"commands": ["set -euo pipefail", command]}, f)
-PY
+          chunk_file = pathlib.Path(sys.argv[1])
+          remote_b64 = sys.argv[2]
+          params_file = sys.argv[3]
+          content = chunk_file.read_text(encoding="utf-8")
+          command = f"cat >> '{remote_b64}' <<'EOF'\n{content}\nEOF"
+          with open(params_file, "w", encoding="utf-8") as f:
+              json.dump({"commands": ["set -euo pipefail", command]}, f)
+          PY
               run_ssm_params_file "Upload chunk to $remote_file" "$tmp_dir/append.json"
             done
 
@@ -254,22 +251,22 @@ PY
           }
 
           cat > /tmp/create-db.sh <<'SCRIPT'
-#!/bin/bash
-set -euo pipefail
+          #!/bin/bash
+          set -euo pipefail
 
-export AWS_DEFAULT_REGION="__AWS_REGION__"
-RDS_ENDPOINT="__RDS_ENDPOINT__"
-DB_SECRET_ARN="__DB_SECRET_ARN__"
-DB_NAME="__DB_NAME__"
-DB_USERNAME="__DB_USERNAME__"
+          export AWS_DEFAULT_REGION="__AWS_REGION__"
+          RDS_ENDPOINT="__RDS_ENDPOINT__"
+          DB_SECRET_ARN="__DB_SECRET_ARN__"
+          DB_NAME="__DB_NAME__"
+          DB_USERNAME="__DB_USERNAME__"
 
-sudo dnf install -y awscli mariadb105 || sudo dnf install -y awscli mariadb || sudo yum install -y awscli mariadb
+          sudo dnf install -y awscli mariadb105 || sudo dnf install -y awscli mariadb || sudo yum install -y awscli mariadb
 
-SECRET_JSON="$(aws secretsmanager get-secret-value --secret-id "$DB_SECRET_ARN" --query SecretString --output text)"
-DB_PASSWORD="$(SECRET_JSON="$SECRET_JSON" python3 -c 'import json, os; print(json.loads(os.environ["SECRET_JSON"])["password"])')"
+          SECRET_JSON="$(aws secretsmanager get-secret-value --secret-id "$DB_SECRET_ARN" --query SecretString --output text)"
+          DB_PASSWORD="$(SECRET_JSON="$SECRET_JSON" python3 -c 'import json, os; print(json.loads(os.environ["SECRET_JSON"])["password"])')"
 
-mysql -h "$RDS_ENDPOINT" -u "$DB_USERNAME" -p"$DB_PASSWORD" -e "CREATE DATABASE IF NOT EXISTS \`$DB_NAME\`;"
-SCRIPT
+          mysql -h "$RDS_ENDPOINT" -u "$DB_USERNAME" -p"$DB_PASSWORD" -e "CREATE DATABASE IF NOT EXISTS \`$DB_NAME\`;"
+          SCRIPT
 
           sed -i \
             -e "s|__AWS_REGION__|$AWS_REGION|g" \
@@ -289,20 +286,20 @@ SCRIPT
           upload_file_to_ec2 "$DB_SQL_FILE" /tmp/db_health.sql
 
           cat > /tmp/import-db.sh <<'SCRIPT'
-#!/bin/bash
-set -euo pipefail
+          #!/bin/bash
+          set -euo pipefail
 
-export AWS_DEFAULT_REGION="__AWS_REGION__"
-RDS_ENDPOINT="__RDS_ENDPOINT__"
-DB_SECRET_ARN="__DB_SECRET_ARN__"
-DB_NAME="__DB_NAME__"
-DB_USERNAME="__DB_USERNAME__"
+          export AWS_DEFAULT_REGION="__AWS_REGION__"
+          RDS_ENDPOINT="__RDS_ENDPOINT__"
+          DB_SECRET_ARN="__DB_SECRET_ARN__"
+          DB_NAME="__DB_NAME__"
+          DB_USERNAME="__DB_USERNAME__"
 
-SECRET_JSON="$(aws secretsmanager get-secret-value --secret-id "$DB_SECRET_ARN" --query SecretString --output text)"
-DB_PASSWORD="$(SECRET_JSON="$SECRET_JSON" python3 -c 'import json, os; print(json.loads(os.environ["SECRET_JSON"])["password"])')"
+          SECRET_JSON="$(aws secretsmanager get-secret-value --secret-id "$DB_SECRET_ARN" --query SecretString --output text)"
+          DB_PASSWORD="$(SECRET_JSON="$SECRET_JSON" python3 -c 'import json, os; print(json.loads(os.environ["SECRET_JSON"])["password"])')"
 
-mysql -h "$RDS_ENDPOINT" -u "$DB_USERNAME" -p"$DB_PASSWORD" "$DB_NAME" < /tmp/db_health.sql
-SCRIPT
+          mysql -h "$RDS_ENDPOINT" -u "$DB_USERNAME" -p"$DB_PASSWORD" "$DB_NAME" < /tmp/db_health.sql
+          SCRIPT
 
           sed -i \
             -e "s|__AWS_REGION__|$AWS_REGION|g" \
