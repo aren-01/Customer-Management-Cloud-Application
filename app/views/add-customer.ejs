@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Add Customer</title>
+
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 20px;
+    }
+
+    form {
+      max-width: 500px;
+      margin: auto;
+      background: #f9f9f9;
+      padding: 20px;
+      border-radius: 8px;
+    }
+
+    label {
+      display: block;
+      margin-top: 10px;
+    }
+
+    input,
+    textarea,
+    select {
+      width: 100%;
+      padding: 8px;
+      margin-top: 5px;
+      box-sizing: border-box;
+    }
+
+    button {
+      margin-top: 15px;
+      padding: 10px 15px;
+      cursor: pointer;
+    }
+
+    .error {
+      color: red;
+      margin-top: 10px;
+      text-align: center;
+    }
+
+    .success {
+      color: green;
+      margin-top: 10px;
+      text-align: center;
+    }
+
+    .nav {
+      margin-bottom: 20px;
+    }
+
+    .nav a {
+      margin-right: 10px;
+    }
+  </style>
+</head>
+
+<body>
+
+
+  <h5>Add New Customer</h5>
+
+  <% if (error) { %>
+    <p class="error"><%= error %></p>
+  <% } %>
+
+  <% if (success) { %>
+    <p class="success"><%= success %></p>
+  <% } %>
+
+  <form method="post" action="/customers/add">
+    <label>Name and Surname:</label>
+    <input type="text" name="name" required>
+
+    <label>Email:</label>
+    <input type="email" name="email" required>
+
+    <label>Phone:</label>
+    <input type="text" name="phone">
+
+    <label>Address:</label>
+    <textarea name="address"></textarea>
+
+    <label>Insurance:</label>
+    <select name="insurance">
+      <option value="verified">Verified</option>
+      <option value="unverified">Unverified</option>
+      <option value="pending">Pending</option>
+    </select>
+
+    <button type="submit">Add Customer</button>
+  </form>
+
+</body>
+</html>

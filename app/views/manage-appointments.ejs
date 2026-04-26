@@ -1,0 +1,214 @@
+<h5>Manage Appointments</h5>
+
+<style>
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 20px;
+}
+th, td {
+  border: 1px solid #ccc;
+  padding: 10px;
+  text-align: left;
+}
+th { background: #f4f4f4; }
+input, textarea, select {
+  width: 100%;
+  padding: 6px;
+  box-sizing: border-box;
+}
+button {
+  padding: 6px 12px;
+  cursor: pointer;
+}
+.search-bar {
+  margin-bottom: 15px;
+  padding: 10px;
+}
+.search-form {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 10px;
+}
+.search-form input[type="text"] {
+  flex: 1;
+  max-width: 350px;
+  padding: 6px 8px;
+  height: 32px;
+  box-sizing: border-box;
+}
+.search-form button,
+.search-form .clear-btn {
+  padding: 6px 10px;
+}
+.radio-group {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  margin-left: 10px;
+}
+.radio-group label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+.pagination {
+  margin-top: 15px;
+  text-align: center;
+}
+
+.pagination a,
+.pagination span {
+  display: inline-block;
+  padding: 6px 10px;
+  margin: 0 3px;
+  border: 1px solid #ccc;
+  text-decoration: none;
+  color: #333;
+}
+
+.pagination .active {
+  background: #333;
+  color: white;
+  font-weight: bold;
+}
+
+</style>
+
+<div class="search-bar">
+  <form method="get" action="/appointments" class="search-form">
+    <input
+      type="text"
+      name="search"
+      placeholder="Filter by Appointment ID or Customer ID"
+      value="<%= search %>"
+    >
+
+    <button type="submit">Apply</button>
+    <button type="button" onclick="window.location.href='/appointments'">Clear</button>
+
+    <span class="radio-group">
+      <label>
+        <input
+          type="radio"
+          name="filter_type"
+          value="aid"
+          <%= filterType === "aid" ? "checked" : "" %>
+        >
+        Appointment ID
+      </label>
+
+      <label>
+        <input
+          type="radio"
+          name="filter_type"
+          value="cid"
+          <%= filterType === "cid" ? "checked" : "" %>
+        >
+        Customer ID
+      </label>
+    </span>
+  </form>
+</div>
+
+<table>
+  <thead>
+    <tr>
+      <th>Appointment ID</th>
+      <th>Customer ID</th>
+      <th>Appointment Date</th>
+      <th>Appointment Status</th>
+      <th>Payment</th>
+      <th>Action</th>
+    </tr>
+  </thead>
+
+  <tbody>
+    <% if (appointments.length > 0) { %>
+
+      <% appointments.forEach(appointment => { %>
+        <tr>
+          <form method="post" action="/appointments/update">
+            <td>
+              <%= appointment.aid %>
+              <input type="hidden" name="aid" value="<%= appointment.aid %>">
+            </td>
+
+            <td>
+              <input type="number" name="cid" value="<%= appointment.cid %>">
+            </td>
+
+            <td>
+              <input
+                type="date"
+                name="date"
+                value="<%= appointment.date instanceof Date ? appointment.date.toISOString().slice(0, 10) : appointment.date %>"
+              >
+            </td>
+
+            <td>
+              <select name="status">
+                <option value="upcoming" <%= appointment.status === "upcoming" ? "selected" : "" %>>
+                  Upcoming
+                </option>
+
+                <option value="successful" <%= appointment.status === "successful" ? "selected" : "" %>>
+                  Successful
+                </option>
+
+                <option value="unsuccessful" <%= appointment.status === "unsuccessful" ? "selected" : "" %>>
+                  Unsuccessful
+                </option>
+
+                <option value="canceled" <%= appointment.status === "canceled" ? "selected" : "" %>>
+                  Canceled
+                </option>
+              </select>
+            </td>
+
+            <td>
+              <select name="payment">
+                <option value="successful" <%= appointment.payment === "successful" ? "selected" : "" %>>
+                  Successful
+                </option>
+
+                <option value="unsuccessful" <%= appointment.payment === "unsuccessful" ? "selected" : "" %>>
+                  Unsuccessful
+                </option>
+              </select>
+            </td>
+
+            <td>
+              <button type="submit">Save</button>
+            </td>
+          </form>
+        </tr>
+      <% }) %>
+
+    <% } else { %>
+
+      <tr>
+        <td colspan="6">No appointments found</td>
+      </tr>
+
+    <% } %>
+  </tbody>
+</table>
+
+<% if (totalPages > 1) { %>
+  <div class="pagination">
+    <% for (let i = 1; i <= totalPages; i++) { %>
+      <% if (i === currentPage) { %>
+        <span class="active"><%= i %></span>
+      <% } else { %>
+        <a href="/appointments?page=<%= i %>&search=<%= encodeURIComponent(search || '') %>&filter_type=<%= filterType %>">
+          <%= i %>
+        </a>
+      <% } %>
+    <% } %>
+  </div>
+<% } %>

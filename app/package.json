@@ -1,0 +1,17 @@
+{
+  "name": "aplus-family-healthcare",
+  "version": "1.0.0",
+  "description": "Node.js version of A+ Family Healthcare data management app",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "ejs": "^3.1.10",
+    "express": "^4.22.1",
+    "express-ejs-layouts": "^2.5.1",
+    "mysql2": "^3.22.2",
+    "pdfkit": "^0.18.0"
+  }
+}

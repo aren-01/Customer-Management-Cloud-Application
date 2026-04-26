@@ -1,0 +1,41 @@
+<h5>Verify Insurance</h5>
+
+<style>
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 20px;
+  }
+  th, td {
+    border: 1px solid #ccc;
+    padding: 10px;
+    text-align: left;
+  }
+  th { background: #f4f4f4; }
+  input, textarea, select {
+    width: 100%;
+    padding: 6px;
+    box-sizing: border-box;
+  }
+</style>
+
+<% if (error) { %>
+  <p class="error"><%= error %></p>
+<% } %>
+
+<% if (success) { %>
+  <p class="success"><%= success %></p>
+<% } %>
+
+<% if (message) { %>
+  <p><%= message %></p>
+<% } %>
+
+<form method="post" action="/insurance/verify" class="form-card">
+  <label>Type Customer ID:</label>
+  <input type="text" name="cid" style="width: 115px;">
+
+  <button type="submit" style="margin-top: 10px;">
+    Check
+  </button>
+</form>

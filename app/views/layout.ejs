@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <title>A+ Family Healthcare Admin Panel</title>
+
+  <link rel="stylesheet" href="/style.css">
+
+
+</head>
+
+<body>
+
+  <aside class="sidebar">
+    <div class="logo">Admin Panel</div>
+
+    <nav>
+      <ul>
+        <li>
+          <a href="/" class="<%= page === 'home' ? 'active' : '' %>">
+            Main Page
+          </a>
+        </li>
+
+        <li>
+          <a href="/customers" class="<%= page === 'customers' ? 'active' : '' %>">
+            Manage Customers
+          </a>
+        </li>
+
+        <li>
+          <a href="/customers/add" class="<%= page === 'add-customer' ? 'active' : '' %>">
+            Add Customer
+          </a>
+        </li>
+
+        <li>
+          <a href="/appointments" class="<%= page === 'appointments' ? 'active' : '' %>">
+            Manage Appointments
+          </a>
+        </li>
+
+        <li>
+          <a href="/appointments/schedule" class="<%= page === 'schedule' ? 'active' : '' %>">
+            Schedule Appointment
+          </a>
+        </li>
+
+        <li>
+          <a href="/insurance/verify" class="<%= page === 'verify' ? 'active' : '' %>">
+            Verify Insurance
+          </a>
+        </li>
+
+        <li>
+          <a href="/reports" class="<%= page === 'report' ? 'active' : '' %>">
+            Create Report
+          </a>
+        </li>
+
+        <li>
+          <a href="/settings" class="<%= page === 'settings' ? 'active' : '' %>">
+            Settings
+          </a>
+        </li>
+      </ul>
+    </nav>
+  </aside>
+
+  <div class="main-content">
+
+
+    <section class="content-area">
+      <%- body %>
+    </section>
+  </div>
+
+</body>
+</html>

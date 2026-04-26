@@ -1,0 +1,60 @@
+<h5>Schedule New Appointment</h5>
+
+ <style>
+    
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 20px;
+    }
+    th, td {
+      border: 1px solid #ccc;
+      padding: 10px;
+      text-align: left;
+    }
+    th { background: #f4f4f4; }
+    input, textarea, select {
+      width: 100%;
+      padding: 6px;
+      box-sizing: border-box;
+    }
+	
+	form { max-width: 500px; margin: auto; background: #f9f9f9; padding: 20px; border-radius: 8px; }
+        label { display: block; margin-top: 10px; }
+        input, textarea, select { width: 100%; padding: 8px; margin-top: 5px; }
+        button { margin-top: 15px; padding: 10px 15px; }
+        .error { color: red; margin-top: 10px; }
+        .success { color: green; margin-top: 10px; }
+  </style>
+
+<% if (error) { %>
+  <p class="error"><%= error %></p>
+<% } %>
+
+<% if (success) { %>
+  <p class="success"><%= success %></p>
+<% } %>
+
+<form method="post" action="/appointments/schedule" class="form-card">
+  <label>Customer ID:</label>
+  <input type="text" name="cid" required>
+
+  <label>Appointment Date:</label>
+  <input type="date" name="date" required>
+
+  <label>Appointment Status:</label>
+  <select name="status">
+    <option value="upcoming">Upcoming</option>
+    <option value="successful">Successful</option>
+    <option value="unsuccessful">Unsuccessful</option>
+    <option value="canceled">Canceled</option>
+  </select>
+
+  <label>Payment:</label>
+  <select name="payment">
+    <option value="successful">Successful</option>
+    <option value="unsuccessful">Unsuccessful</option>
+  </select>
+
+  <button type="submit">Schedule Appointment</button>
+</form>

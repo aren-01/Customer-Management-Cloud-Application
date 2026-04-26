@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Manage Customers</title>
+
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 20px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 20px;
+    }
+
+    th, td {
+      border: 1px solid #ccc;
+      padding: 10px;
+      text-align: left;
+    }
+
+    th {
+      background: #f4f4f4;
+    }
+
+    input, textarea, select {
+      width: 100%;
+      padding: 6px;
+      box-sizing: border-box;
+    }
+
+    button {
+      padding: 6px 10px;
+      cursor: pointer;
+    }
+
+    .search-bar {
+      margin-bottom: 15px;
+      padding: 10px;
+    }
+
+    .search-form {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .search-form input[type="text"] {
+      max-width: 350px;
+      height: 32px;
+    }
+
+    .nav {
+      margin-bottom: 20px;
+    }
+
+    .nav a {
+      margin-right: 10px;
+    }
+	
+	.pagination {
+  margin-top: 15px;
+  text-align: center;
+}
+
+.pagination a,
+.pagination span {
+  display: inline-block;
+  padding: 6px 10px;
+  margin: 0 3px;
+  border: 1px solid #ccc;
+  text-decoration: none;
+  color: #333;
+}
+
+.pagination .active {
+  background: #333;
+  color: white;
+  font-weight: bold;
+}
+  </style>
+</head>
+
+<body>
+
+
+
+  <h5>Manage Customers</h5>
+
+  <div class="search-bar">
+    <form method="get" action="/customers" class="search-form">
+      <input
+        type="text"
+        name="search"
+        placeholder="Filter by Customer ID or Name"
+        value="<%= search %>"
+      >
+
+      <button type="submit">Apply</button>
+      <button type="button" onclick="window.location.href='/customers'">Clear</button>
+    </form>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Customer ID</th>
+        <th>Name and Surname</th>
+        <th>Email</th>
+        <th>Phone</th>
+        <th>Address</th>
+        <th>Insurance</th>
+        <th>Action</th>
+      </tr>
+    </thead>
+
+    <tbody>
+      <% if (customers.length > 0) { %>
+
+<!-- Using "foreach" to prepare a list -->
+        <% customers.forEach(customer => { %>
+          <tr>
+            <form method="post" action="/customers/update">
+              <td>
+                <%= customer.cid %>
+                <input type="hidden" name="cid" value="<%= customer.cid %>">
+              </td>
+
+              <td>
+                <input type="text" name="name" value="<%= customer.name %>">
+              </td>
+
+              <td>
+                <input type="text" name="email" value="<%= customer.email %>">
+              </td>
+
+              <td>
+                <input type="text" name="phone" value="<%= customer.phone %>">
+              </td>
+
+              <td>
+                <input type="text" name="address" value="<%= customer.address %>">
+              </td>
+
+              <td>
+                <select name="insurance">
+                  <option value="verified" <%= customer.insurance === "verified" ? "selected" : "" %>>
+                    Verified
+                  </option>
+
+                  <option value="unverified" <%= customer.insurance === "unverified" ? "selected" : "" %>>
+                    Unverified
+                  </option>
+
+                  <option value="pending" <%= customer.insurance === "pending" ? "selected" : "" %>>
+                    Pending
+                  </option>
+                </select>
+              </td>
+
+              <td>
+                <button type="submit">Save</button>
+              </td>
+            </form>
+          </tr>
+        <% }) %>
+
+      <% } else { %>
+
+        <tr>
+          <td colspan="7">No customers found</td>
+        </tr>
+
+      <% } %>
+    </tbody>
+  </table>
+  
+  <% if (totalPages > 1) { %>
+  <div class="pagination">
+    <% for (let i = 1; i <= totalPages; i++) { %>
+      <% if (i === currentPage) { %>
+        <span class="active"><%= i %></span>
+      <% } else { %>
+        <a href="/customers?page=<%= i %>&search=<%= encodeURIComponent(search || '') %>">
+          <%= i %>
+        </a>
+      <% } %>
+    <% } %>
+  </div>
+<% } %>
+
+</body>
+</html>
