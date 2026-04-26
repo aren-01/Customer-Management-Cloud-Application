@@ -74,7 +74,7 @@ jobs:
               --password-stdin "${{ needs.create-ecr.outputs.registry_url }}"
 
       - name: Build Docker image with Docker Compose
-        working-directory: app  # <--- THIS IS THE FIX
+        working-directory: app  
         run: |
           docker compose up --build -d
           docker image inspect "$LOCAL_IMAGE_NAME"
