@@ -2,6 +2,7 @@ name: Deploy Customer Management App
 
 on:
   workflow_dispatch:
+
 permissions:
   id-token: write  
   contents: read    
@@ -11,7 +12,6 @@ env:
   LOCAL_IMAGE_NAME: app-app:latest
   ECR_REPOSITORY_NAME: customermanagementapp
   DB_SQL_FILE: db/db_health.sql
-
 
 jobs:
   create-ecr:
@@ -74,6 +74,7 @@ jobs:
               --password-stdin "${{ needs.create-ecr.outputs.registry_url }}"
 
       - name: Build Docker image with Docker Compose
+        working-directory: app  # <--- THIS IS THE FIX
         run: |
           docker compose up --build -d
           docker image inspect "$LOCAL_IMAGE_NAME"
