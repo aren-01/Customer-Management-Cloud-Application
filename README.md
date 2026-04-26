@@ -7,7 +7,7 @@ and use the application in the cloud.
 The healthcare company stores customer information in an Aurora Global
 Database. A sample database named
 \"[db_health.sql](https://github.com/aren-01/Customer-Management-Cloud-Application/blob/main/db/db_health.sql)"
-is in the database folder. A PHP admin panel application, deployed and
+is in the database folder. A JS admin panel application, deployed and
 containerized with Docker on the local machine, retrieves data from the
 database and edits it. As per the requirements of this scenario, for
 availability and low latency, there are two regions, and these regions
@@ -22,7 +22,7 @@ Transit Gateway.
 
 In this project, I focused on the system shown above. This is a
 simplified version of the first architecture, and it includes an
-Internet Gateway (IGW). In practice, it is not safe to deploy a PHP
+Internet Gateway (IGW). In practice, it is not safe to deploy a JS
 admin panel without a login page; however, this simplified deployment is
 only for training purposes using the AWS Free Tier. There is one
 temporary EC2 instance, used only to import the SQL file into RDS.
