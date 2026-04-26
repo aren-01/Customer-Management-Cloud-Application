@@ -41,19 +41,19 @@ Step-by-step guidance is below.
 
 5.  Authenticate Docker with Amazon ECR.
 ```bash
-aws ecr get-login-password \--region us-east-1 \|
-docker login \--username AWS \--password-stdin
-\<ACCOUNT_ID\>.dkr.ecr.us-east-1.amazonaws.com
+aws ecr get-login-password --region us-east-1 |
+docker login --username AWS --password-stdin
+<ACCOUNT_ID\>.dkr.ecr.us-east-1.amazonaws.com
 ```
 6.  Tag the Docker Image for ECR.
 ```bash
 docker tag healthcare-app:latest
-\<ACCOUNT_ID\>.dkr.ecr.us-east-1.amazonaws.com/healthcare-app:latest
+<ACCOUNT_ID\>.dkr.ecr.us-east-1.amazonaws.com/healthcare-app:latest
 ```
 7.  Push the Image to Amazon ECR.
 ```bash
 docker push
-\<ACCOUNT_ID\>.dkr.ecr.us-east-1.amazonaws.com/healthcare-app:latest
+<ACCOUNT_ID\>.dkr.ecr.us-east-1.amazonaws.com/healthcare-app:latest
 ```
 8.  Create a CloudFormation stack and upload the
     "[cloudformation.yml](https://github.com/aren-01/Customer-Management-Cloud-Application/blob/main/cloudformation.yml)"
@@ -67,7 +67,7 @@ docker push
     EC2 key pair, create one.
 
 11. This will set up the application. Now pull the
-    "[db_health.sql](https://github.com/aren-01/Customer-Management-Cloud-Application/blob/main/db/db_health.sql)"
+    "[db_health.sql](https://github.com/aren-01/Customer-Management-Cloud-Application/blob/main/db/init.sql)"
     file to import it into the RDS database.
 
 12. In the CloudFormation file, security groups are configured to allow
@@ -83,19 +83,19 @@ sudo dnf install mariadb105 -y
 ```
 15. Connect to the RDS database
 ```bash
-mysql -h \<RDS-ENDPOINT\> -u admin -p
+mysql -h <RDS-ENDPOINT\> -u admin -p
 ```
 16. Create a new database named "healthcaredb"
 
 17. Exit MySQL and the EC2 instance, then upload the "db_health.sql"
     file to the EC2 instance.
 ```bash
-scp -i your-key.pem db_health.sql
-ec2-user@\<EC2-PUBLIC-IP\>:/home/ec2-user/
+scp -i your-key.pem init.sql
+ec2-user@<EC2-PUBLIC-IP\>:/home/ec2-user/
 ```
 18. Import the SQL file into the RDS database.
 ```bash
-mysql -h \<RDS-ENDPOINT\> -u admin -p healthcaredb \< db_health.sql
+mysql -h <RDS-ENDPOINT\> -u admin -p healthcaredb < init.sql
 ```
 19. The application should now be available through the Application Load
     Balancer's HTTP listener. You can access the admin panel to modify
