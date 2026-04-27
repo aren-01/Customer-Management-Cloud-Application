@@ -20,6 +20,8 @@ Transit Gateway.
 
 ![](./images/image2.jpeg)
 
+## For quick installation, just fork the repo and deploy it through GitHub Actions. However, if you prefer to use CloudFormation, follow the instructions below.
+
 In this project, I focused on the system shown above. This is a
 simplified version of the first architecture, and it includes an
 Internet Gateway (IGW). In practice, it is not safe to deploy a JS
