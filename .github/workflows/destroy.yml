@@ -68,7 +68,39 @@ jobs:
           else
             echo "Secret does not exist or is already deleted: $DB_SECRET_ID"
           fi
+          
+      - name: Scale ECS service down before destroy
+        run: |
+          set -euo pipefail
 
+          aws ecs update-service \
+            --cluster healthcare-ecs-cluster \
+            --service healthcare-fargate-service \
+            --desired-count 0 \
+            --region us-east-1 || true
+
+          TASKS=$(aws ecs list-tasks \
+            --cluster healthcare-ecs-cluster \
+            --service-name healthcare-fargate-service \
+            --region us-east-1 \
+            --query 'taskArns[]' \
+            --output text || true)
+
+          if [ -n "$TASKS" ] && [ "$TASKS" != "None" ]; then
+            for TASK in $TASKS; do
+              aws ecs stop-task \
+                --cluster healthcare-ecs-cluster \
+                --task "$TASK" \
+                --reason "Pre Terraform destroy cleanup" \
+                --region us-east-1 || true
+            done
+          fi
+
+          aws ecs wait services-stable \
+            --cluster healthcare-ecs-cluster \
+            --services healthcare-fargate-service \
+            --region us-east-1 || true
+            
       - name: Terraform destroy app infrastructure
         working-directory: terraform/02-app
         env:
