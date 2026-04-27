@@ -293,7 +293,7 @@ resource "aws_db_instance" "health" {
 }
 
 resource "aws_secretsmanager_secret" "db" {
-  name                    = "db-health-connection-sandbox"
+  name                    = "db-health-connection-sandbox-01"
   description             = "RDS connection parameters for db-health sandbox"
   recovery_window_in_days = 0
 
@@ -529,7 +529,7 @@ resource "aws_instance" "temporary" {
   iam_instance_profile        = aws_iam_instance_profile.ec2_profile.name
   associate_public_ip_address = true
 
-  # No key_name is set. Connect through AWS Systems Manager Session Manager, not SSH/PEM.
+
 
   tags = merge(local.common_tags, {
     Name = "temporary-instance"
