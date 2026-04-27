@@ -13,7 +13,7 @@ env:
   LOCAL_IMAGE_NAME: app-app:latest
   ECR_REPOSITORY_NAME: customermanagementapp
   DB_SQL_FILE: db/db_health.sql
-  TF_STATE_BUCKET: customermanagementapp-tfstate-${{ github.repository_owner }}-${{ github.event.repository.name }}
+  TF_STATE_BUCKET: cma02-tfstate-${{ github.repository_owner }}
 
 jobs:
   create-ecr:
