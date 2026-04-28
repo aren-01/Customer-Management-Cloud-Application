@@ -1,4 +1,4 @@
-name: Destroy Customer Management App
+name: Destroy the all deployment
 
 on:
   workflow_dispatch:
@@ -21,6 +21,7 @@ jobs:
 
     outputs:
       tf_state_bucket: ${{ steps.tfstate.outputs.bucket_name }}
+      bucket_exists: ${{ steps.tfstate.outputs.bucket_exists }}
 
     steps:
       - name: Checkout repository
@@ -45,13 +46,15 @@ jobs:
           echo "Using Terraform state bucket: $BUCKET_NAME"
           echo "bucket_name=$BUCKET_NAME" >> "$GITHUB_OUTPUT"
 
-          if ! aws s3api head-bucket --bucket "$BUCKET_NAME" 2>/dev/null; then
+          if aws s3api head-bucket --bucket "$BUCKET_NAME" 2>/dev/null; then
+            echo "bucket_exists=true" >> "$GITHUB_OUTPUT"
+          else
             echo "Terraform state bucket does not exist: $BUCKET_NAME"
-            echo "Nothing to destroy from Terraform state."
-            exit 1
+            echo "bucket_exists=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Force delete Secrets Manager secret
+        if: steps.tfstate.outputs.bucket_exists == 'true'
         run: |
           set -euo pipefail
 
@@ -70,6 +73,7 @@ jobs:
           fi
 
       - name: Terraform destroy app infrastructure
+        if: steps.tfstate.outputs.bucket_exists == 'true'
         working-directory: terraform/02-app
         env:
           TF_VAR_image_uri: placeholder
@@ -150,6 +154,10 @@ jobs:
     needs: destroy-app
     if: always()
 
+    outputs:
+      tf_state_bucket: ${{ steps.tfstate.outputs.bucket_name }}
+      bucket_exists: ${{ steps.tfstate.outputs.bucket_exists }}
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -173,13 +181,15 @@ jobs:
           echo "Using Terraform state bucket: $BUCKET_NAME"
           echo "bucket_name=$BUCKET_NAME" >> "$GITHUB_OUTPUT"
 
-          if ! aws s3api head-bucket --bucket "$BUCKET_NAME" 2>/dev/null; then
+          if aws s3api head-bucket --bucket "$BUCKET_NAME" 2>/dev/null; then
+            echo "bucket_exists=true" >> "$GITHUB_OUTPUT"
+          else
             echo "Terraform state bucket does not exist: $BUCKET_NAME"
-            echo "Skipping ECR Terraform destroy."
-            exit 0
+            echo "bucket_exists=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Empty ECR repository before destroy
+        if: steps.tfstate.outputs.bucket_exists == 'true'
         run: |
           set -euo pipefail
 
@@ -208,6 +218,7 @@ jobs:
           fi
 
       - name: Terraform destroy ECR
+        if: steps.tfstate.outputs.bucket_exists == 'true'
         working-directory: terraform/01-ecr
         run: |
           set -euo pipefail
@@ -219,3 +230,77 @@ jobs:
             -backend-config="use_lockfile=true"
 
           terraform destroy -auto-approve
+
+  delete-tf-state-bucket:
+    runs-on: ubuntu-latest
+    needs:
+      - destroy-app
+      - destroy-ecr
+    if: always()
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+
+      - name: Empty and delete Terraform state bucket
+        run: |
+          set -euo pipefail
+
+          BUCKET_NAME=$(echo "${TF_STATE_BUCKET}" | tr '[:upper:]' '[:lower:]' | tr '_' '-')
+
+          if ! aws s3api head-bucket --bucket "$BUCKET_NAME" 2>/dev/null; then
+            echo "Terraform state bucket does not exist: $BUCKET_NAME"
+            exit 0
+          fi
+
+          echo "Emptying Terraform state bucket, including object versions and delete markers: $BUCKET_NAME"
+
+          while true; do
+            VERSION_DELETE_FILE=$(mktemp)
+            MARKER_DELETE_FILE=$(mktemp)
+
+            aws s3api list-object-versions \
+              --bucket "$BUCKET_NAME" \
+              --query '{Objects: Versions[].{Key:Key,VersionId:VersionId}}' \
+              --output json > "$VERSION_DELETE_FILE"
+
+            aws s3api list-object-versions \
+              --bucket "$BUCKET_NAME" \
+              --query '{Objects: DeleteMarkers[].{Key:Key,VersionId:VersionId}}' \
+              --output json > "$MARKER_DELETE_FILE"
+
+            VERSION_COUNT=$(python3 -c 'import json,sys; data=json.load(open(sys.argv[1])); print(len(data.get("Objects") or []))' "$VERSION_DELETE_FILE")
+            MARKER_COUNT=$(python3 -c 'import json,sys; data=json.load(open(sys.argv[1])); print(len(data.get("Objects") or []))' "$MARKER_DELETE_FILE")
+
+            if [ "$VERSION_COUNT" -eq 0 ] && [ "$MARKER_COUNT" -eq 0 ]; then
+              rm -f "$VERSION_DELETE_FILE" "$MARKER_DELETE_FILE"
+              break
+            fi
+
+            if [ "$VERSION_COUNT" -gt 0 ]; then
+              echo "Deleting $VERSION_COUNT object version(s)..."
+              aws s3api delete-objects \
+                --bucket "$BUCKET_NAME" \
+                --delete "file://$VERSION_DELETE_FILE"
+            fi
+
+            if [ "$MARKER_COUNT" -gt 0 ]; then
+              echo "Deleting $MARKER_COUNT delete marker(s)..."
+              aws s3api delete-objects \
+                --bucket "$BUCKET_NAME" \
+                --delete "file://$MARKER_DELETE_FILE"
+            fi
+
+            rm -f "$VERSION_DELETE_FILE" "$MARKER_DELETE_FILE"
+          done
+
+          echo "Deleting Terraform state bucket: $BUCKET_NAME"
+
+          aws s3api delete-bucket \
+            --bucket "$BUCKET_NAME" \
+            --region "$AWS_REGION"
+
+          echo "Terraform state bucket deleted: $BUCKET_NAME"
