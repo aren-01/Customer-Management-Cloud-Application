@@ -82,6 +82,8 @@ jobs:
       - name: Terraform apply ECR
         working-directory: terraform/01-ecr
         run: |
+          set -euo pipefail
+
           terraform init \
             -backend-config="bucket=${{ steps.tfstate.outputs.bucket_name }}" \
             -backend-config="key=customermanagementapp/ecr/terraform.tfstate" \
@@ -94,6 +96,8 @@ jobs:
         id: ecr
         working-directory: terraform/01-ecr
         run: |
+          set -euo pipefail
+
           echo "aws_region=$(terraform output -raw aws_region)" >> "$GITHUB_OUTPUT"
           echo "repository_url=$(terraform output -raw repository_url)" >> "$GITHUB_OUTPUT"
           echo "registry_url=$(terraform output -raw registry_url)" >> "$GITHUB_OUTPUT"
@@ -117,6 +121,8 @@ jobs:
 
       - name: Login to Amazon ECR
         run: |
+          set -euo pipefail
+
           aws ecr get-login-password --region "${{ needs.create-ecr.outputs.aws_region }}" \
             | docker login \
               --username AWS \
@@ -125,12 +131,16 @@ jobs:
       - name: Build Docker image with Docker Compose
         working-directory: app
         run: |
+          set -euo pipefail
+
           docker compose up --build -d
           docker image inspect "$LOCAL_IMAGE_NAME"
 
       - name: Tag and push Docker image
         id: image
         run: |
+          set -euo pipefail
+
           IMAGE_URI="${{ needs.create-ecr.outputs.repository_url }}:latest"
 
           docker tag "$LOCAL_IMAGE_NAME" "$IMAGE_URI"
@@ -163,6 +173,8 @@ jobs:
           TF_VAR_image_uri: ${{ needs.build-and-push.outputs.image_uri }}
           TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
         run: |
+          set -euo pipefail
+
           terraform init \
             -backend-config="bucket=${{ needs.create-ecr.outputs.tf_state_bucket }}" \
             -backend-config="key=customermanagementapp/app/terraform.tfstate" \
@@ -175,19 +187,58 @@ jobs:
         id: app
         working-directory: terraform/02-app
         run: |
+          set -euo pipefail
+
           echo "aws_region=$(terraform output -raw aws_region)" >> "$GITHUB_OUTPUT"
-          echo "ec2_instance_id=$(terraform output -raw ec2_instance_id)" >> "$GITHUB_OUTPUT"
           echo "rds_endpoint=$(terraform output -raw rds_endpoint)" >> "$GITHUB_OUTPUT"
           echo "db_secret_arn=$(terraform output -raw db_secret_arn)" >> "$GITHUB_OUTPUT"
           echo "db_name=$(terraform output -raw db_name)" >> "$GITHUB_OUTPUT"
           echo "db_username=$(terraform output -raw db_username)" >> "$GITHUB_OUTPUT"
+          echo "temporary_ec2_subnet_id=$(terraform output -raw temporary_ec2_subnet_id)" >> "$GITHUB_OUTPUT"
+          echo "temporary_ec2_security_group_id=$(terraform output -raw temporary_ec2_security_group_id)" >> "$GITHUB_OUTPUT"
+          echo "temporary_ec2_instance_profile_name=$(terraform output -raw temporary_ec2_instance_profile_name)" >> "$GITHUB_OUTPUT"
+          echo "temporary_ec2_ami_id=$(terraform output -raw temporary_ec2_ami_id)" >> "$GITHUB_OUTPUT"
 
-      - name: Wait for EC2 SSM to become online
+      - name: Launch temporary EC2 for database import
+        id: temp_ec2
         env:
           AWS_REGION: ${{ steps.app.outputs.aws_region }}
-          EC2_INSTANCE_ID: ${{ steps.app.outputs.ec2_instance_id }}
+          AMI_ID: ${{ steps.app.outputs.temporary_ec2_ami_id }}
+          SUBNET_ID: ${{ steps.app.outputs.temporary_ec2_subnet_id }}
+          SECURITY_GROUP_ID: ${{ steps.app.outputs.temporary_ec2_security_group_id }}
+          INSTANCE_PROFILE_NAME: ${{ steps.app.outputs.temporary_ec2_instance_profile_name }}
         run: |
           set -euo pipefail
+
+          INSTANCE_ID=$(aws ec2 run-instances \
+            --region "$AWS_REGION" \
+            --image-id "$AMI_ID" \
+            --instance-type t3.micro \
+            --subnet-id "$SUBNET_ID" \
+            --security-group-ids "$SECURITY_GROUP_ID" \
+            --iam-instance-profile "Name=$INSTANCE_PROFILE_NAME" \
+            --associate-public-ip-address \
+            --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=temporary-instance},{Key=Environment,Value=sandbox},{Key=ManagedBy,Value=github-actions}]' \
+            --query 'Instances[0].InstanceId' \
+            --output text)
+
+          echo "Temporary EC2 instance: $INSTANCE_ID"
+          echo "instance_id=$INSTANCE_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for temporary EC2 to become ready
+        env:
+          AWS_REGION: ${{ steps.app.outputs.aws_region }}
+          EC2_INSTANCE_ID: ${{ steps.temp_ec2.outputs.instance_id }}
+        run: |
+          set -euo pipefail
+
+          aws ec2 wait instance-running \
+            --region "$AWS_REGION" \
+            --instance-ids "$EC2_INSTANCE_ID"
+
+          aws ec2 wait instance-status-ok \
+            --region "$AWS_REGION" \
+            --instance-ids "$EC2_INSTANCE_ID"
 
           for i in {1..30}; do
             STATUS=$(aws ssm describe-instance-information \
@@ -197,7 +248,7 @@ jobs:
               --output text 2>/dev/null || true)
 
             if [ "$STATUS" = "Online" ]; then
-              echo "EC2 instance is online in SSM."
+              echo "Temporary EC2 instance is online in SSM."
               exit 0
             fi
 
@@ -205,13 +256,13 @@ jobs:
             sleep 10
           done
 
-          echo "EC2 instance did not become Online in SSM."
+          echo "Temporary EC2 instance did not become Online in SSM."
           exit 1
 
       - name: Install MariaDB client, create DB, upload SQL, and import
         env:
           AWS_REGION: ${{ steps.app.outputs.aws_region }}
-          EC2_INSTANCE_ID: ${{ steps.app.outputs.ec2_instance_id }}
+          EC2_INSTANCE_ID: ${{ steps.temp_ec2.outputs.instance_id }}
           RDS_ENDPOINT: ${{ steps.app.outputs.rds_endpoint }}
           DB_SECRET_ARN: ${{ steps.app.outputs.db_secret_arn }}
           DB_NAME: ${{ steps.app.outputs.db_name }}
@@ -263,7 +314,7 @@ jobs:
             python3 - "$params_file" "$@" <<'PY'
           import json
           import sys
-
+          
           params_file = sys.argv[1]
           commands = list(sys.argv[2:])
           with open(params_file, "w", encoding="utf-8") as f:
@@ -291,7 +342,7 @@ jobs:
           import json
           import pathlib
           import sys
-
+          
           chunk_file = pathlib.Path(sys.argv[1])
           remote_b64 = sys.argv[2]
           params_file = sys.argv[3]
@@ -309,23 +360,25 @@ jobs:
               "chmod 600 '$remote_file'" \
               "rm -f '$remote_b64'"
             run_ssm_params_file "Decode remote file $remote_file" "$tmp_dir/decode.json"
+
+            rm -rf "$tmp_dir"
           }
 
           cat > /tmp/create-db.sh <<'SCRIPT'
           #!/bin/bash
           set -euo pipefail
-
+          
           export AWS_DEFAULT_REGION="__AWS_REGION__"
           RDS_ENDPOINT="__RDS_ENDPOINT__"
           DB_SECRET_ARN="__DB_SECRET_ARN__"
           DB_NAME="__DB_NAME__"
           DB_USERNAME="__DB_USERNAME__"
-
+          
           sudo dnf install -y awscli mariadb105 || sudo dnf install -y awscli mariadb || sudo yum install -y awscli mariadb
-
+          
           SECRET_JSON="$(aws secretsmanager get-secret-value --secret-id "$DB_SECRET_ARN" --query SecretString --output text)"
           DB_PASSWORD="$(SECRET_JSON="$SECRET_JSON" python3 -c 'import json, os; print(json.loads(os.environ["SECRET_JSON"])["password"])')"
-
+          
           mysql -h "$RDS_ENDPOINT" -u "$DB_USERNAME" -p"$DB_PASSWORD" -e "CREATE DATABASE IF NOT EXISTS \`$DB_NAME\`;"
           SCRIPT
 
@@ -349,16 +402,16 @@ jobs:
           cat > /tmp/import-db.sh <<'SCRIPT'
           #!/bin/bash
           set -euo pipefail
-
+          
           export AWS_DEFAULT_REGION="__AWS_REGION__"
           RDS_ENDPOINT="__RDS_ENDPOINT__"
           DB_SECRET_ARN="__DB_SECRET_ARN__"
           DB_NAME="__DB_NAME__"
           DB_USERNAME="__DB_USERNAME__"
-
+          
           SECRET_JSON="$(aws secretsmanager get-secret-value --secret-id "$DB_SECRET_ARN" --query SecretString --output text)"
           DB_PASSWORD="$(SECRET_JSON="$SECRET_JSON" python3 -c 'import json, os; print(json.loads(os.environ["SECRET_JSON"])["password"])')"
-
+          
           mysql -h "$RDS_ENDPOINT" -u "$DB_USERNAME" -p"$DB_PASSWORD" "$DB_NAME" < /tmp/db_health.sql
           SCRIPT
 
@@ -376,3 +429,20 @@ jobs:
             "chmod +x /tmp/import-db.sh" \
             "sudo /tmp/import-db.sh"
           run_ssm_params_file "Import db/db_health.sql into RDS" /tmp/run-import-db.json
+
+      - name: Terminate temporary EC2
+        if: always() && steps.temp_ec2.outputs.instance_id != ''
+        env:
+          AWS_REGION: ${{ steps.app.outputs.aws_region }}
+          EC2_INSTANCE_ID: ${{ steps.temp_ec2.outputs.instance_id }}
+        run: |
+          set +e
+
+          echo "Terminating temporary EC2 instance: $EC2_INSTANCE_ID"
+          aws ec2 terminate-instances \
+            --region "$AWS_REGION" \
+            --instance-ids "$EC2_INSTANCE_ID"
+
+          aws ec2 wait instance-terminated \
+            --region "$AWS_REGION" \
+            --instance-ids "$EC2_INSTANCE_ID"
