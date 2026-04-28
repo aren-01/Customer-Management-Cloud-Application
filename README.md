@@ -1,5 +1,6 @@
 # Customer Management Application on AWS
 
+## Original Idea
 ![](./images/image1.jpeg) Based on a
 healthcare system scenario, this AWS architecture shows how to connect
 and use the application in the cloud.
