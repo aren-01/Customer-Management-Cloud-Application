@@ -574,5 +574,5 @@ output "temporary_ec2_instance_profile_name" {
 }
 
 output "temporary_ec2_ami_id" {
-  value = data.aws_ssm_parameter.al2023_ami.value
+  value = nonsensitive(data.aws_ssm_parameter.al2023_ami.value)
 }
