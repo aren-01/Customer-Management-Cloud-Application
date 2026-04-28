@@ -36,14 +36,14 @@ I also deployed a GitHub [destroy.yml](.github/workflows/destroy.yml) file to de
 
 [deploy.yml](.github/workflows/deploy.yml):
 
-Creates a S3 Bucket to store Terraform state 
-Creates an ECR repo
-Containerizes the application through Docker
-Pushes the container
-Installs the infrastructure above through Terraform
-Installs the DB into the RDS instance with a temporary EC2 instance
+1. Creates a S3 Bucket to store Terraform state 
+2. Creates an ECR repo
+3. Containerizes the application through Docker
+4. Pushes the container
+5. Installs the infrastructure above through Terraform
+6. Installs the DB into the RDS instance with a temporary EC2 instance
 
-Please see the [cloudformation.yml](optional/cloudformation.yml) file to manually deploy the VPC infrastructure.
+Please see the [cloudformation.yml](optional/cloudformation.yml) file if you prefer manual deployment of the VPC infrastructure.
 
 
 
