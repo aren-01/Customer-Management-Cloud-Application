@@ -7,7 +7,7 @@
 3.  Create an ECR repository. CloudFormation will prompt you for the
     repository URL.
 
-> ![](./images/image3.png)
+![](../images/image3.png)
 
 4.  Install and configure the AWS CLI on the local machine.
 
