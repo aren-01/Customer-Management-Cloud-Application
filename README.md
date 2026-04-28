@@ -21,7 +21,6 @@ Transit Gateway.
 
 ![](./images/image2.jpg)
 
-## For quick installation, just fork the repo and deploy it through GitHub Actions.
 
 In this project, I focused on the system shown above. This is a
 simplified version of the first architecture, and it includes an
@@ -31,6 +30,8 @@ only for training purposes using the AWS Free Tier. There is one
 temporary EC2 instance, used only to import the SQL file into RDS.
 
 I also deployed a GitHub [destroy.yml](.github/workflows/destroy.yml) file to destroy the system. The deploy workflow creates an S3 bucket to store the Terraform state.
+
+## Quick Deployment
 
 [deploy.yml](.github/workflows/deploy.yml):
 
