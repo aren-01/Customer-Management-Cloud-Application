@@ -33,7 +33,7 @@ docker push
 
 9.  Fill the parameters as shown in the screenshot below.
 
-> ![](./images/image4.png)
+![](../images/image4.png)
 
 10. Start deploying the stack and wait until it finishes. If there is no
     EC2 key pair, create one.
