@@ -475,7 +475,11 @@ resource "aws_ecs_service" "app" {
     target_group_arn = aws_lb_target_group.app.arn
   }
 
-  depends_on = [aws_lb_listener.http]
+ 
+  depends_on = [
+  aws_lb_listener.http,
+  aws_route.public_internet
+  ]
 
   tags = local.common_tags
 }
