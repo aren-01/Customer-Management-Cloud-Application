@@ -523,25 +523,6 @@ resource "aws_iam_instance_profile" "ec2_profile" {
   role = aws_iam_role.ec2_role.name
 }
 
-resource "aws_instance" "temporary" {
-  ami                         = data.aws_ssm_parameter.al2023_ami.value
-  instance_type               = "t3.micro"
-  subnet_id                   = aws_subnet.public_a.id
-  vpc_security_group_ids      = [aws_security_group.ec2.id]
-  iam_instance_profile        = aws_iam_instance_profile.ec2_profile.name
-  associate_public_ip_address = true
-
-
-
-  tags = merge(local.common_tags, {
-    Name = "temporary-instance"
-  })
-
-  depends_on = [
-    aws_iam_role_policy_attachment.ssm,
-    aws_iam_role_policy.ec2_read_db_secret
-  ]
-}
 
 output "vpc_id" {
   value = aws_vpc.main.id
@@ -563,9 +544,6 @@ output "db_secret_arn" {
   value = aws_secretsmanager_secret.db.arn
 }
 
-output "ec2_instance_id" {
-  value = aws_instance.temporary.id
-}
 
 output "image_uri_used_by_ecs" {
   value = var.image_uri
