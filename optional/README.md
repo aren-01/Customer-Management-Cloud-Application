@@ -1,4 +1,4 @@
-#Follow these steps if you want to manually deploy with [optional/cloudformation.yml](cloudformation.yml).
+# Follow these steps if you want to manually deploy with [cloudformation.yml](cloudformation.yml).
 
 1.  Pull or download the "app" folder.
 
