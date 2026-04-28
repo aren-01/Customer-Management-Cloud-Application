@@ -1,6 +1,6 @@
 # Customer Management Application on AWS
 
-## Original Idea
+## Core Idea
 ![](./images/image1.jpeg) Based on a
 healthcare system scenario, this AWS architecture shows how to connect
 and use the application in the cloud.
@@ -19,6 +19,9 @@ Credentials are stored in AWS Secrets Manager. In case of failure in one
 region, the on-premises server can connect to another region via AWS
 Transit Gateway.
 
+
+## Actual Deployment
+
 ![](./images/image2.jpg)
 
 
@@ -30,8 +33,6 @@ only for training purposes using the AWS Free Tier. There is one
 temporary EC2 instance, used only to import the SQL file into RDS.
 
 I also deployed a GitHub [destroy.yml](.github/workflows/destroy.yml) file to destroy the system. The deploy workflow creates an S3 bucket to store the Terraform state.
-
-## Quick Deployment
 
 [deploy.yml](.github/workflows/deploy.yml):
 
