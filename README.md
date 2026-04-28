@@ -45,5 +45,8 @@ I also deployed a GitHub [destroy.yml](.github/workflows/destroy.yml) file to de
 
 Please see the [cloudformation.yml](optional/cloudformation.yml) file if you prefer manual deployment of the VPC infrastructure.
 
+You need to configure the GitHub permissions using the least privilege principle when setting up your integration on AWS.
+Always follow the principle of least privilege to authorize GitHub.
+
 
 
