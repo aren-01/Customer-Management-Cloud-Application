@@ -560,3 +560,19 @@ output "db_username" {
 output "aws_region" {
   value = "us-east-1"
 }
+
+output "temporary_ec2_subnet_id" {
+  value = aws_subnet.public_a.id
+}
+
+output "temporary_ec2_security_group_id" {
+  value = aws_security_group.ec2.id
+}
+
+output "temporary_ec2_instance_profile_name" {
+  value = aws_iam_instance_profile.ec2_profile.name
+}
+
+output "temporary_ec2_ami_id" {
+  value = data.aws_ssm_parameter.al2023_ami.value
+}
