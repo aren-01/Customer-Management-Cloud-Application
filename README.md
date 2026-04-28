@@ -20,7 +20,7 @@ region, the on-premises server can connect to another region via AWS
 Transit Gateway.
 
 
-## Actual Deployment
+## Actual Deployment for This Version
 
 ![](./images/image2.jpg)
 
