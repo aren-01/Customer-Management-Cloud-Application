@@ -19,7 +19,7 @@ Credentials are stored in AWS Secrets Manager. In case of failure in one
 region, the on-premises server can connect to another region via AWS
 Transit Gateway.
 
-![](./images/image2.jpeg)
+![](./images/image2.jpg)
 
 ## For quick installation, just fork the repo and deploy it through GitHub Actions. However, if you prefer to use CloudFormation, follow the instructions below.
 
