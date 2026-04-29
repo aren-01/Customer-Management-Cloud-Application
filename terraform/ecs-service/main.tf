@@ -24,6 +24,9 @@ locals {
   common_tags = {
     Environment = local.environment
   }
+
+  # Prefer the new public_subnet_ids input. Keep private_subnet_ids as a backward-compatible alias.
+  ecs_subnet_ids = length(var.public_subnet_ids) > 0 ? var.public_subnet_ids : var.private_subnet_ids
 }
 
 provider "aws" {
@@ -52,9 +55,16 @@ variable "vpc_id" {
   description = "VPC ID created by the infrastructure stack."
 }
 
+variable "public_subnet_ids" {
+  type        = list(string)
+  description = "Public subnet IDs created by the infrastructure stack for the ECS service ENIs."
+  default     = []
+}
+
 variable "private_subnet_ids" {
   type        = list(string)
-  description = "Private subnet IDs created by the infrastructure stack for the ECS service ENIs."
+  description = "Deprecated compatibility alias for public_subnet_ids. The ECS service now expects public subnets."
+  default     = []
 }
 
 variable "alb_security_group_id" {
@@ -384,8 +394,8 @@ resource "aws_ecs_service" "app" {
   task_definition = aws_ecs_task_definition.app.arn
 
   network_configuration {
-    assign_public_ip = false
-    subnets          = var.private_subnet_ids
+    assign_public_ip = true
+    subnets          = local.ecs_subnet_ids
     security_groups  = [aws_security_group.fargate.id]
   }
 
