@@ -117,8 +117,8 @@ resource "aws_vpc" "main" {
   })
 }
 
-# Public subnets require an Internet Gateway attached to the VPC.
-# The route table below sends outbound internet traffic through this IGW.
+# Public subnets for the ALB and ECS service ENIs.
+# These subnets use public CIDR blocks, map public IPs on launch, and route 0.0.0.0/0 through the Internet Gateway.
 resource "aws_internet_gateway" "main" {
   vpc_id = aws_vpc.main.id
 
@@ -127,7 +127,7 @@ resource "aws_internet_gateway" "main" {
   })
 }
 
-resource "aws_subnet" "private_a" {
+resource "aws_subnet" "public_a" {
   vpc_id                  = aws_vpc.main.id
   availability_zone       = data.aws_availability_zones.available.names[0]
   cidr_block              = local.public_subnet_a_cidr
@@ -138,7 +138,7 @@ resource "aws_subnet" "private_a" {
   })
 }
 
-resource "aws_subnet" "private_b" {
+resource "aws_subnet" "public_b" {
   vpc_id                  = aws_vpc.main.id
   availability_zone       = data.aws_availability_zones.available.names[1]
   cidr_block              = local.public_subnet_b_cidr
@@ -194,13 +194,13 @@ resource "aws_route_table" "private" {
   })
 }
 
-resource "aws_route_table_association" "private_a" {
-  subnet_id      = aws_subnet.private_a.id
+resource "aws_route_table_association" "public_a" {
+  subnet_id      = aws_subnet.public_a.id
   route_table_id = aws_route_table.public.id
 }
 
-resource "aws_route_table_association" "private_b" {
-  subnet_id      = aws_subnet.private_b.id
+resource "aws_route_table_association" "public_b" {
+  subnet_id      = aws_subnet.public_b.id
   route_table_id = aws_route_table.public.id
 }
 
@@ -212,6 +212,28 @@ resource "aws_route_table_association" "rds_private_a" {
 resource "aws_route_table_association" "rds_private_b" {
   subnet_id      = aws_subnet.rds_private_b.id
   route_table_id = aws_route_table.private.id
+}
+
+# Preserve existing state while renaming the public subnet resources from private_* to public_*.
+# Remove these moved blocks only after a successful apply has migrated the state.
+moved {
+  from = aws_subnet.private_a
+  to   = aws_subnet.public_a
+}
+
+moved {
+  from = aws_subnet.private_b
+  to   = aws_subnet.public_b
+}
+
+moved {
+  from = aws_route_table_association.private_a
+  to   = aws_route_table_association.public_a
+}
+
+moved {
+  from = aws_route_table_association.private_b
+  to   = aws_route_table_association.public_b
 }
 
 resource "aws_security_group" "alb" {
@@ -388,9 +410,9 @@ resource "aws_secretsmanager_secret_version" "db" {
 
 resource "aws_lb" "main" {
   name               = "healthcare-alb"
-  internal           = true # Keep internal because CloudFront VPC Origin targets an internal ALB.
+  internal           = true # Internal ALB, placed in public subnets for the CloudFront VPC origin path.
   load_balancer_type = "application"
-  subnets            = [aws_subnet.private_a.id, aws_subnet.private_b.id]
+  subnets            = [aws_subnet.public_a.id, aws_subnet.public_b.id]
   security_groups    = [aws_security_group.alb.id]
 
   tags = local.common_tags
@@ -613,7 +635,7 @@ output "vpc_id" {
 
 output "public_subnet_ids" {
   description = "Public subnet IDs for ALB and ECS service ENIs."
-  value       = [aws_subnet.private_a.id, aws_subnet.private_b.id]
+  value       = [aws_subnet.public_a.id, aws_subnet.public_b.id]
 }
 
 output "private_subnet_ids" {
