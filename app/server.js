@@ -15,6 +15,7 @@ const requiredEnvVars = [
   "COGNITO_CLIENT_ID",
   "COGNITO_CLIENT_SECRET",
   "SESSION_SECRET",
+  "CLOUDFRONT_SECRET", // Added this here
   "DB_HOST",
   "DB_USER",
   "DB_PASS",
@@ -27,8 +28,6 @@ if (missingEnvVars.length > 0) {
 }
 
 const APP_BASE_URL = process.env.APP_BASE_URL.replace(/\/$/, "");
-const APP_BASE_HOSTNAME = new URL(APP_BASE_URL).host.toLowerCase();
-const ALLOWED_HOSTNAME = (process.env.ALLOWED_HOSTNAME || APP_BASE_HOSTNAME).toLowerCase();
 const AWS_REGION = process.env.AWS_REGION || "us-east-1";
 const COGNITO_DOMAIN = process.env.COGNITO_DOMAIN.replace(/\/$/, "");
 const COGNITO_USER_POOL_ID = process.env.COGNITO_USER_POOL_ID;
@@ -39,6 +38,7 @@ const COGNITO_LOGOUT_URL = process.env.COGNITO_LOGOUT_URL || `${APP_BASE_URL}/`;
 const COGNITO_ISSUER = `https://cognito-idp.${AWS_REGION}.amazonaws.com/${COGNITO_USER_POOL_ID}`;
 const COGNITO_SCOPES = "openid email profile";
 const COGNITO_JWKS = createRemoteJWKSet(new URL(`${COGNITO_ISSUER}/.well-known/jwks.json`));
+const CLOUDFRONT_SECRET = process.env.CLOUDFRONT_SECRET; // Grab secret from ENV
 
 // Trust CloudFront/ALB proxy headers.
 app.set("trust proxy", true);
@@ -100,26 +100,15 @@ app.use((req, res, next) => {
   next();
 });
 
-function getRequestHostname(req) {
-  const forwardedHost = req.headers["x-forwarded-host"];
-  const host = Array.isArray(forwardedHost)
-    ? forwardedHost[0]
-    : forwardedHost || req.headers.host || "";
+// Replaced Host verification with Secret verification
+function requireCloudFrontSecret(req, res, next) {
+  const incomingSecret = req.headers["x-cloudfront-secret"];
 
-  return host.split(",")[0].trim().toLowerCase();
-}
-
-function requireCloudFrontHost(req, res, next) {
-  const requestHostname = getRequestHostname(req);
-
-  if (requestHostname === ALLOWED_HOSTNAME) {
+  if (incomingSecret === CLOUDFRONT_SECRET) {
     return next();
   }
 
-  console.warn(
-    `Blocked request with invalid host. expected=${ALLOWED_HOSTNAME}, actual=${requestHostname}, path=${req.originalUrl}`
-  );
-
+  console.warn(`Blocked request with invalid secret. path=${req.originalUrl}`);
   return res.status(403).send("Forbidden. Please use the CloudFront application URL.");
 }
 
@@ -200,8 +189,8 @@ function requireAuth(req, res, next) {
   return res.redirect(`/login?returnTo=${encodeURIComponent(req.originalUrl)}`);
 }
 
-// Only allow normal app traffic when the request came through the CloudFront URL.
-app.use(requireCloudFrontHost);
+// Only allow normal app traffic when the request has the CloudFront secret header
+app.use(requireCloudFrontSecret);
 
 // This lets Express use files from the public folder.
 app.use(express.static(path.join(__dirname, "public")));
