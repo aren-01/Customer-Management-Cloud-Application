@@ -1,4 +1,4 @@
-name: Destroy the all deployment
+name: Destroy the deployment
 
 on:
   workflow_dispatch:
@@ -7,21 +7,22 @@ permissions:
   id-token: write
   contents: read
 
+concurrency:
+  group: destroy-${{ github.repository }}
+  cancel-in-progress: false
+
 env:
   AWS_REGION: us-east-1
   TF_STATE_BUCKET: cma02-tfstate-${{ github.repository_owner }}
-  ECR_REPOSITORY_NAME: customermanagementapp
+  DEFAULT_ECR_REPOSITORY_NAME: customermanagementapp
   INSTANCE_PROFILE_NAME: ec2-ssm-profile
   IAM_ROLE_NAME: ec2-ssm-role
   DB_SECRET_ID: db-health-connection-sandbox-01
 
 jobs:
-  destroy-app:
+  destroy:
+    name: Destroy app resources
     runs-on: ubuntu-latest
-
-    outputs:
-      tf_state_bucket: ${{ steps.tfstate.outputs.bucket_name }}
-      bucket_exists: ${{ steps.tfstate.outputs.bucket_exists }}
 
     steps:
       - name: Checkout repository
@@ -35,6 +36,8 @@ jobs:
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
 
       - name: Resolve Terraform state bucket
         id: tfstate
@@ -53,71 +56,258 @@ jobs:
             echo "bucket_exists=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Force delete Secrets Manager secret
-        if: steps.tfstate.outputs.bucket_exists == 'true'
-        run: |
-          set -euo pipefail
-
-          if aws secretsmanager describe-secret \
-            --secret-id "$DB_SECRET_ID" \
-            --region "$AWS_REGION" >/dev/null 2>&1; then
-
-            echo "Force deleting secret: $DB_SECRET_ID"
-
-            aws secretsmanager delete-secret \
-              --secret-id "$DB_SECRET_ID" \
-              --force-delete-without-recovery \
-              --region "$AWS_REGION"
-          else
-            echo "Secret does not exist or is already deleted: $DB_SECRET_ID"
-          fi
-
-      - name: Terraform destroy app infrastructure
+      - name: Read infrastructure outputs
+        id: infra
         if: steps.tfstate.outputs.bucket_exists == 'true'
         working-directory: terraform/infrastructure
         env:
-          TF_VAR_image_uri: placeholder
-          TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
+          TF_STATE_BUCKET_RESOLVED: ${{ steps.tfstate.outputs.bucket_name }}
         run: |
           set -euo pipefail
 
           terraform init \
-            -backend-config="bucket=${{ steps.tfstate.outputs.bucket_name }}" \
-            -backend-config="key=customermanagementapp/app/terraform.tfstate" \
-            -backend-config="region=${{ env.AWS_REGION }}" \
+            -backend-config="bucket=${TF_STATE_BUCKET_RESOLVED}" \
+            -backend-config="key=customermanagementapp/infrastructure/terraform.tfstate" \
+            -backend-config="region=${AWS_REGION}" \
             -backend-config="use_lockfile=true"
+
+          if ! terraform state list >/tmp/infrastructure-state.txt 2>/dev/null || [ ! -s /tmp/infrastructure-state.txt ]; then
+            echo "Infrastructure state is empty or missing."
+            echo "has_infra_state=false" >> "$GITHUB_OUTPUT"
+            echo "ecr_repository_name=${DEFAULT_ECR_REPOSITORY_NAME}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "has_infra_state=true" >> "$GITHUB_OUTPUT"
+
+          write_output() {
+            local name="$1"
+            shift
+            local value=""
+
+            if value=$("$@" 2>/dev/null); then
+              echo "${name}=${value}" >> "$GITHUB_OUTPUT"
+            else
+              echo "${name}=" >> "$GITHUB_OUTPUT"
+            fi
+          }
+
+          write_output aws_region terraform output -raw aws_region
+          write_output ecr_repository_url terraform output -raw ecr_repository_url
+          write_output vpc_id terraform output -raw vpc_id
+          write_output public_subnet_ids terraform output -json public_subnet_ids
+          write_output alb_security_group_id terraform output -raw alb_security_group_id
+          write_output rds_security_group_id terraform output -raw rds_security_group_id
+          write_output target_group_arn terraform output -raw target_group_arn
+          write_output alb_listener_arn terraform output -raw alb_listener_arn
+          write_output db_secret_arn terraform output -raw db_secret_arn
+          write_output app_base_url terraform output -raw cloudfront_url
+          write_output allowed_hostname terraform output -raw cloudfront_domain_name
+          write_output cognito_domain terraform output -raw cognito_domain
+          write_output cognito_user_pool_id terraform output -raw cognito_user_pool_id
+          write_output cognito_client_id terraform output -raw cognito_user_pool_client_id
+          write_output cognito_client_secret terraform output -raw cognito_user_pool_client_secret
+          write_output cognito_callback_url terraform output -raw cognito_callback_url
+          write_output cognito_logout_url terraform output -raw cognito_logout_url
+
+          ECR_REPOSITORY_URL=$(terraform output -raw ecr_repository_url 2>/dev/null || true)
+          if [ -n "$ECR_REPOSITORY_URL" ] && [ "$ECR_REPOSITORY_URL" != "${ECR_REPOSITORY_URL#*/}" ]; then
+            echo "ecr_repository_name=${ECR_REPOSITORY_URL#*/}" >> "$GITHUB_OUTPUT"
+          else
+            echo "ecr_repository_name=${DEFAULT_ECR_REPOSITORY_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Destroy ECS service Terraform stack
+        if: steps.tfstate.outputs.bucket_exists == 'true'
+        working-directory: terraform/ecs-service
+        env:
+          TF_STATE_BUCKET_RESOLVED: ${{ steps.tfstate.outputs.bucket_name }}
+          ECR_REPOSITORY_URL: ${{ steps.infra.outputs.ecr_repository_url }}
+          VPC_ID: ${{ steps.infra.outputs.vpc_id }}
+          PUBLIC_SUBNET_IDS: ${{ steps.infra.outputs.public_subnet_ids }}
+          ALB_SECURITY_GROUP_ID: ${{ steps.infra.outputs.alb_security_group_id }}
+          RDS_SECURITY_GROUP_ID: ${{ steps.infra.outputs.rds_security_group_id }}
+          TARGET_GROUP_ARN: ${{ steps.infra.outputs.target_group_arn }}
+          ALB_LISTENER_ARN: ${{ steps.infra.outputs.alb_listener_arn }}
+          DB_SECRET_ARN: ${{ steps.infra.outputs.db_secret_arn }}
+          APP_BASE_URL: ${{ steps.infra.outputs.app_base_url }}
+          ALLOWED_HOSTNAME: ${{ steps.infra.outputs.allowed_hostname }}
+          COGNITO_DOMAIN: ${{ steps.infra.outputs.cognito_domain }}
+          COGNITO_USER_POOL_ID: ${{ steps.infra.outputs.cognito_user_pool_id }}
+          COGNITO_CLIENT_ID: ${{ steps.infra.outputs.cognito_client_id }}
+          COGNITO_CLIENT_SECRET: ${{ steps.infra.outputs.cognito_client_secret }}
+          COGNITO_CALLBACK_URL: ${{ steps.infra.outputs.cognito_callback_url }}
+          COGNITO_LOGOUT_URL: ${{ steps.infra.outputs.cognito_logout_url }}
+          SESSION_SECRET: ${{ secrets.SESSION_SECRET }}
+          CLOUDFRONT_SECRET: ${{ secrets.CLOUDFRONT_SECRET }}
+        run: |
+          set -euo pipefail
+
+          terraform init \
+            -backend-config="bucket=${TF_STATE_BUCKET_RESOLVED}" \
+            -backend-config="key=customermanagementapp/ecs-service/terraform.tfstate" \
+            -backend-config="region=${AWS_REGION}" \
+            -backend-config="use_lockfile=true"
+
+          if ! terraform state list >/tmp/ecs-service-state.txt 2>/dev/null || [ ! -s /tmp/ecs-service-state.txt ]; then
+            echo "ECS service state is empty or missing. Skipping ECS service destroy."
+            exit 0
+          fi
+
+          if [ "${{ steps.infra.outputs.has_infra_state }}" != "true" ]; then
+            echo "Infrastructure outputs are unavailable, so ecs-service cannot be safely destroyed."
+            exit 1
+          fi
+
+          COGNITO_CLIENT_SECRET="${COGNITO_CLIENT_SECRET:-destroy-placeholder}"
+          SESSION_SECRET="${SESSION_SECRET:-destroy-placeholder}"
+          CLOUDFRONT_SECRET="${CLOUDFRONT_SECRET:-destroy-placeholder}"
+
+          echo "::add-mask::$COGNITO_CLIENT_SECRET"
+          echo "::add-mask::$SESSION_SECRET"
+          echo "::add-mask::$CLOUDFRONT_SECRET"
+
+          terraform destroy -auto-approve \
+            -var="ecr_repository_url=${ECR_REPOSITORY_URL}" \
+            -var="image_tag=destroy-placeholder" \
+            -var="vpc_id=${VPC_ID}" \
+            -var="public_subnet_ids=${PUBLIC_SUBNET_IDS}" \
+            -var="alb_security_group_id=${ALB_SECURITY_GROUP_ID}" \
+            -var="rds_security_group_id=${RDS_SECURITY_GROUP_ID}" \
+            -var="target_group_arn=${TARGET_GROUP_ARN}" \
+            -var="alb_listener_arn=${ALB_LISTENER_ARN}" \
+            -var="db_secret_arn=${DB_SECRET_ARN}" \
+            -var="app_base_url=${APP_BASE_URL}" \
+            -var="allowed_hostname=${ALLOWED_HOSTNAME}" \
+            -var="cognito_domain=${COGNITO_DOMAIN}" \
+            -var="cognito_user_pool_id=${COGNITO_USER_POOL_ID}" \
+            -var="cognito_client_id=${COGNITO_CLIENT_ID}" \
+            -var="cognito_client_secret=${COGNITO_CLIENT_SECRET}" \
+            -var="cognito_callback_url=${COGNITO_CALLBACK_URL}" \
+            -var="cognito_logout_url=${COGNITO_LOGOUT_URL}" \
+            -var="session_secret=${SESSION_SECRET}" \
+            -var="cloudfront_secret=${CLOUDFRONT_SECRET}"
+
+      # Intentionally no terraform destroy for terraform/db-import.
+      # The deploy workflow creates and destroys that temporary stack itself.
+
+      - name: Empty ECR repository before destroying infrastructure
+        if: steps.tfstate.outputs.bucket_exists == 'true'
+        env:
+          ECR_REPOSITORY_NAME: ${{ steps.infra.outputs.ecr_repository_name }}
+        run: |
+          set -euo pipefail
+
+          REPOSITORY_NAME="${ECR_REPOSITORY_NAME:-$DEFAULT_ECR_REPOSITORY_NAME}"
+
+          if aws ecr describe-repositories \
+            --repository-names "$REPOSITORY_NAME" \
+            --region "$AWS_REGION" >/dev/null 2>&1; then
+
+            while true; do
+              IMAGE_IDS=$(aws ecr list-images \
+                --repository-name "$REPOSITORY_NAME" \
+                --region "$AWS_REGION" \
+                --max-items 100 \
+                --query 'imageIds' \
+                --output json)
+
+              IMAGE_COUNT=$(python3 -c 'import json,sys; print(len(json.load(sys.stdin)))' <<< "$IMAGE_IDS")
+
+              if [ "$IMAGE_COUNT" -eq 0 ]; then
+                echo "ECR repository is empty: $REPOSITORY_NAME"
+                break
+              fi
+
+              echo "Deleting $IMAGE_COUNT image(s) from ECR repository: $REPOSITORY_NAME"
+              aws ecr batch-delete-image \
+                --repository-name "$REPOSITORY_NAME" \
+                --region "$AWS_REGION" \
+                --image-ids "$IMAGE_IDS" >/dev/null
+            done
+          else
+            echo "ECR repository does not exist: $REPOSITORY_NAME"
+          fi
+
+      - name: Force delete Secrets Manager DB secret before infrastructure destroy
+        if: steps.tfstate.outputs.bucket_exists == 'true'
+        env:
+          DB_SECRET_ARN: ${{ steps.infra.outputs.db_secret_arn }}
+        run: |
+          set -euo pipefail
+
+          SECRET_TO_DELETE="${DB_SECRET_ARN:-$DB_SECRET_ID}"
+
+          if [ -z "$SECRET_TO_DELETE" ]; then
+            echo "No DB secret ARN or fallback secret id is available. Skipping secret delete."
+            exit 0
+          fi
+
+          if aws secretsmanager describe-secret \
+            --secret-id "$SECRET_TO_DELETE" \
+            --region "$AWS_REGION" >/dev/null 2>&1; then
+
+            echo "Force deleting Secrets Manager secret: $SECRET_TO_DELETE"
+            aws secretsmanager delete-secret \
+              --secret-id "$SECRET_TO_DELETE" \
+              --force-delete-without-recovery \
+              --region "$AWS_REGION" || true
+          else
+            echo "Secret does not exist or is already deleted: $SECRET_TO_DELETE"
+          fi
+
+      - name: Destroy infrastructure Terraform stack
+        if: steps.tfstate.outputs.bucket_exists == 'true' && steps.infra.outputs.has_infra_state == 'true'
+        working-directory: terraform/infrastructure
+        env:
+          TF_STATE_BUCKET_RESOLVED: ${{ steps.tfstate.outputs.bucket_name }}
+          TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
+          TF_VAR_cloudfront_secret: ${{ secrets.CLOUDFRONT_SECRET }}
+        run: |
+          set -euo pipefail
+
+          terraform init \
+            -backend-config="bucket=${TF_STATE_BUCKET_RESOLVED}" \
+            -backend-config="key=customermanagementapp/infrastructure/terraform.tfstate" \
+            -backend-config="region=${AWS_REGION}" \
+            -backend-config="use_lockfile=true"
+
+          export TF_VAR_db_password="${TF_VAR_db_password:-destroy-placeholder}"
+          export TF_VAR_cloudfront_secret="${TF_VAR_cloudfront_secret:-destroy-placeholder}"
+
+          echo "::add-mask::$TF_VAR_db_password"
+          echo "::add-mask::$TF_VAR_cloudfront_secret"
 
           terraform destroy -auto-approve
 
-      - name: Detach role from instance profile
-        if: always()
+      - name: Force delete Secrets Manager DB secret after infrastructure destroy
+        if: steps.tfstate.outputs.bucket_exists == 'true'
+        env:
+          DB_SECRET_ARN: ${{ steps.infra.outputs.db_secret_arn }}
         run: |
           set -euo pipefail
 
-          if aws iam get-instance-profile \
-            --instance-profile-name "$INSTANCE_PROFILE_NAME" >/dev/null 2>&1; then
+          SECRET_TO_DELETE="${DB_SECRET_ARN:-$DB_SECRET_ID}"
 
-            echo "Checking whether role $IAM_ROLE_NAME is attached to profile $INSTANCE_PROFILE_NAME..."
-
-            ATTACHED_ROLE=$(aws iam get-instance-profile \
-              --instance-profile-name "$INSTANCE_PROFILE_NAME" \
-              --query "InstanceProfile.Roles[?RoleName=='$IAM_ROLE_NAME'].RoleName | [0]" \
-              --output text)
-
-            if [ "$ATTACHED_ROLE" = "$IAM_ROLE_NAME" ]; then
-              echo "Detaching role from instance profile..."
-
-              aws iam remove-role-from-instance-profile \
-                --instance-profile-name "$INSTANCE_PROFILE_NAME" \
-                --role-name "$IAM_ROLE_NAME"
-            else
-              echo "Role is not attached to the instance profile."
-            fi
-          else
-            echo "Instance profile does not exist: $INSTANCE_PROFILE_NAME"
+          if [ -z "$SECRET_TO_DELETE" ]; then
+            echo "No DB secret ARN or fallback secret id is available. Skipping secret delete."
+            exit 0
           fi
 
-      - name: Delete instance profile
+          if aws secretsmanager describe-secret \
+            --secret-id "$SECRET_TO_DELETE" \
+            --region "$AWS_REGION" >/dev/null 2>&1; then
+
+            echo "Force deleting leftover Secrets Manager secret: $SECRET_TO_DELETE"
+            aws secretsmanager delete-secret \
+              --secret-id "$SECRET_TO_DELETE" \
+              --force-delete-without-recovery \
+              --region "$AWS_REGION" || true
+          else
+            echo "Secret does not exist or is already deleted: $SECRET_TO_DELETE"
+          fi
+
+      - name: Delete IAM instance profile and role
         if: always()
         run: |
           set -euo pipefail
@@ -125,131 +315,76 @@ jobs:
           if aws iam get-instance-profile \
             --instance-profile-name "$INSTANCE_PROFILE_NAME" >/dev/null 2>&1; then
 
-            echo "Deleting instance profile: $INSTANCE_PROFILE_NAME"
+            echo "Removing all roles from instance profile: $INSTANCE_PROFILE_NAME"
+            PROFILE_ROLES=$(aws iam get-instance-profile \
+              --instance-profile-name "$INSTANCE_PROFILE_NAME" \
+              --query 'InstanceProfile.Roles[].RoleName' \
+              --output text)
 
+            for ROLE_IN_PROFILE in $PROFILE_ROLES; do
+              aws iam remove-role-from-instance-profile \
+                --instance-profile-name "$INSTANCE_PROFILE_NAME" \
+                --role-name "$ROLE_IN_PROFILE" || true
+            done
+
+            echo "Deleting instance profile: $INSTANCE_PROFILE_NAME"
             aws iam delete-instance-profile \
-              --instance-profile-name "$INSTANCE_PROFILE_NAME"
+              --instance-profile-name "$INSTANCE_PROFILE_NAME" || true
           else
             echo "Instance profile already deleted or does not exist: $INSTANCE_PROFILE_NAME"
           fi
 
-      - name: Delete IAM role
-        if: always()
-        run: |
-          set -euo pipefail
+          if aws iam get-role --role-name "$IAM_ROLE_NAME" >/dev/null 2>&1; then
+            echo "Removing $IAM_ROLE_NAME from any remaining instance profiles"
+            INSTANCE_PROFILES=$(aws iam list-instance-profiles-for-role \
+              --role-name "$IAM_ROLE_NAME" \
+              --query 'InstanceProfiles[].InstanceProfileName' \
+              --output text || true)
 
-          if aws iam get-role \
-            --role-name "$IAM_ROLE_NAME" >/dev/null 2>&1; then
+            for PROFILE in $INSTANCE_PROFILES; do
+              aws iam remove-role-from-instance-profile \
+                --instance-profile-name "$PROFILE" \
+                --role-name "$IAM_ROLE_NAME" || true
+            done
+
+            echo "Deleting inline policies from IAM role: $IAM_ROLE_NAME"
+            INLINE_POLICIES=$(aws iam list-role-policies \
+              --role-name "$IAM_ROLE_NAME" \
+              --query 'PolicyNames[]' \
+              --output text || true)
+
+            for POLICY_NAME in $INLINE_POLICIES; do
+              aws iam delete-role-policy \
+                --role-name "$IAM_ROLE_NAME" \
+                --policy-name "$POLICY_NAME" || true
+            done
+
+            echo "Detaching managed policies from IAM role: $IAM_ROLE_NAME"
+            ATTACHED_POLICIES=$(aws iam list-attached-role-policies \
+              --role-name "$IAM_ROLE_NAME" \
+              --query 'AttachedPolicies[].PolicyArn' \
+              --output text || true)
+
+            for POLICY_ARN in $ATTACHED_POLICIES; do
+              aws iam detach-role-policy \
+                --role-name "$IAM_ROLE_NAME" \
+                --policy-arn "$POLICY_ARN" || true
+            done
 
             echo "Deleting IAM role: $IAM_ROLE_NAME"
-
-            aws iam delete-role \
-              --role-name "$IAM_ROLE_NAME"
+            aws iam delete-role --role-name "$IAM_ROLE_NAME" || true
           else
             echo "IAM role already deleted or does not exist: $IAM_ROLE_NAME"
           fi
 
-  destroy-ecr:
-    runs-on: ubuntu-latest
-    needs: destroy-app
-    if: always()
-
-    outputs:
-      tf_state_bucket: ${{ steps.tfstate.outputs.bucket_name }}
-      bucket_exists: ${{ steps.tfstate.outputs.bucket_exists }}
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-region: ${{ env.AWS_REGION }}
-          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-
-      - name: Resolve Terraform state bucket
-        id: tfstate
-        run: |
-          set -euo pipefail
-
-          BUCKET_NAME=$(echo "${TF_STATE_BUCKET}" | tr '[:upper:]' '[:lower:]' | tr '_' '-')
-
-          echo "Using Terraform state bucket: $BUCKET_NAME"
-          echo "bucket_name=$BUCKET_NAME" >> "$GITHUB_OUTPUT"
-
-          if aws s3api head-bucket --bucket "$BUCKET_NAME" 2>/dev/null; then
-            echo "bucket_exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "Terraform state bucket does not exist: $BUCKET_NAME"
-            echo "bucket_exists=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Empty ECR repository before destroy
-        if: steps.tfstate.outputs.bucket_exists == 'true'
-        run: |
-          set -euo pipefail
-
-          if aws ecr describe-repositories \
-            --repository-names "$ECR_REPOSITORY_NAME" \
-            --region "$AWS_REGION" >/dev/null 2>&1; then
-
-            IMAGE_IDS=$(aws ecr list-images \
-              --repository-name "$ECR_REPOSITORY_NAME" \
-              --region "$AWS_REGION" \
-              --query 'imageIds' \
-              --output json)
-
-            if [ "$IMAGE_IDS" != "[]" ]; then
-              echo "Deleting images from ECR repository: $ECR_REPOSITORY_NAME"
-
-              aws ecr batch-delete-image \
-                --repository-name "$ECR_REPOSITORY_NAME" \
-                --region "$AWS_REGION" \
-                --image-ids "$IMAGE_IDS"
-            else
-              echo "ECR repository is already empty."
-            fi
-          else
-            echo "ECR repository does not exist: $ECR_REPOSITORY_NAME"
-          fi
-
-      - name: Terraform destroy ECR
-        if: steps.tfstate.outputs.bucket_exists == 'true'
-        working-directory: terraform/ecs-service
-        run: |
-          set -euo pipefail
-
-          terraform init \
-            -backend-config="bucket=${{ steps.tfstate.outputs.bucket_name }}" \
-            -backend-config="key=customermanagementapp/ecr/terraform.tfstate" \
-            -backend-config="region=${{ env.AWS_REGION }}" \
-            -backend-config="use_lockfile=true"
-
-          terraform destroy -auto-approve
-
-  delete-tf-state-bucket:
-    runs-on: ubuntu-latest
-    needs:
-      - destroy-app
-      - destroy-ecr
-    if: always()
-
-    steps:
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-region: ${{ env.AWS_REGION }}
-          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
-
       - name: Empty and delete Terraform state bucket
+        if: success() && steps.tfstate.outputs.bucket_exists == 'true'
+        env:
+          TF_STATE_BUCKET_RESOLVED: ${{ steps.tfstate.outputs.bucket_name }}
         run: |
           set -euo pipefail
 
-          BUCKET_NAME=$(echo "${TF_STATE_BUCKET}" | tr '[:upper:]' '[:lower:]' | tr '_' '-')
+          BUCKET_NAME="$TF_STATE_BUCKET_RESOLVED"
 
           if ! aws s3api head-bucket --bucket "$BUCKET_NAME" 2>/dev/null; then
             echo "Terraform state bucket does not exist: $BUCKET_NAME"
@@ -264,11 +399,13 @@ jobs:
 
             aws s3api list-object-versions \
               --bucket "$BUCKET_NAME" \
+              --max-items 1000 \
               --query '{Objects: Versions[].{Key:Key,VersionId:VersionId}}' \
               --output json > "$VERSION_DELETE_FILE"
 
             aws s3api list-object-versions \
               --bucket "$BUCKET_NAME" \
+              --max-items 1000 \
               --query '{Objects: DeleteMarkers[].{Key:Key,VersionId:VersionId}}' \
               --output json > "$MARKER_DELETE_FILE"
 
@@ -284,21 +421,20 @@ jobs:
               echo "Deleting $VERSION_COUNT object version(s)..."
               aws s3api delete-objects \
                 --bucket "$BUCKET_NAME" \
-                --delete "file://$VERSION_DELETE_FILE"
+                --delete "file://$VERSION_DELETE_FILE" >/dev/null
             fi
 
             if [ "$MARKER_COUNT" -gt 0 ]; then
               echo "Deleting $MARKER_COUNT delete marker(s)..."
               aws s3api delete-objects \
                 --bucket "$BUCKET_NAME" \
-                --delete "file://$MARKER_DELETE_FILE"
+                --delete "file://$MARKER_DELETE_FILE" >/dev/null
             fi
 
             rm -f "$VERSION_DELETE_FILE" "$MARKER_DELETE_FILE"
           done
 
           echo "Deleting Terraform state bucket: $BUCKET_NAME"
-
           aws s3api delete-bucket \
             --bucket "$BUCKET_NAME" \
             --region "$AWS_REGION"
