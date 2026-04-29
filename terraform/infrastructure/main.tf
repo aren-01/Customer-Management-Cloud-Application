@@ -33,6 +33,8 @@ locals {
   vpc_cidr              = "10.20.0.0/16"
   public_subnet_a_cidr  = "10.20.101.0/24"
   public_subnet_b_cidr  = "10.20.102.0/24"
+  private_subnet_a_cidr = "10.20.201.0/24"
+  private_subnet_b_cidr = "10.20.202.0/24"
 
   ecr_repository_name = "customermanagementapp"
 
@@ -147,7 +149,31 @@ resource "aws_subnet" "private_b" {
   })
 }
 
-resource "aws_route_table" "private" {
+# Dedicated private subnets for RDS and private management resources.
+# These subnets do not receive public IPs and do not have a default route to the Internet Gateway.
+resource "aws_subnet" "rds_private_a" {
+  vpc_id                  = aws_vpc.main.id
+  availability_zone       = data.aws_availability_zones.available.names[0]
+  cidr_block              = local.private_subnet_a_cidr
+  map_public_ip_on_launch = false
+
+  tags = merge(local.common_tags, {
+    Name = "PrivateRdsSubnet-${data.aws_availability_zones.available.names[0]}"
+  })
+}
+
+resource "aws_subnet" "rds_private_b" {
+  vpc_id                  = aws_vpc.main.id
+  availability_zone       = data.aws_availability_zones.available.names[1]
+  cidr_block              = local.private_subnet_b_cidr
+  map_public_ip_on_launch = false
+
+  tags = merge(local.common_tags, {
+    Name = "PrivateRdsSubnet-${data.aws_availability_zones.available.names[1]}"
+  })
+}
+
+resource "aws_route_table" "public" {
   vpc_id = aws_vpc.main.id
 
   route {
@@ -160,13 +186,31 @@ resource "aws_route_table" "private" {
   })
 }
 
+resource "aws_route_table" "private" {
+  vpc_id = aws_vpc.main.id
+
+  tags = merge(local.common_tags, {
+    Name = "PrivateRouteTable"
+  })
+}
+
 resource "aws_route_table_association" "private_a" {
   subnet_id      = aws_subnet.private_a.id
-  route_table_id = aws_route_table.private.id
+  route_table_id = aws_route_table.public.id
 }
 
 resource "aws_route_table_association" "private_b" {
   subnet_id      = aws_subnet.private_b.id
+  route_table_id = aws_route_table.public.id
+}
+
+resource "aws_route_table_association" "rds_private_a" {
+  subnet_id      = aws_subnet.rds_private_a.id
+  route_table_id = aws_route_table.private.id
+}
+
+resource "aws_route_table_association" "rds_private_b" {
+  subnet_id      = aws_subnet.rds_private_b.id
   route_table_id = aws_route_table.private.id
 }
 
@@ -268,7 +312,7 @@ resource "aws_vpc_endpoint" "interface" {
   vpc_id              = aws_vpc.main.id
   service_name        = "com.amazonaws.${data.aws_region.current.name}.${each.value}"
   vpc_endpoint_type   = "Interface"
-  subnet_ids          = [aws_subnet.private_a.id, aws_subnet.private_b.id]
+  subnet_ids          = [aws_subnet.rds_private_a.id, aws_subnet.rds_private_b.id]
   security_group_ids  = [aws_security_group.vpc_endpoints.id]
   private_dns_enabled = true
 
@@ -290,8 +334,8 @@ resource "aws_vpc_endpoint" "s3" {
 
 resource "aws_db_subnet_group" "main" {
   name        = "healthcare-db-subnet-group"
-  description = "Subnets for RDS; instance remains non-public"
-  subnet_ids   = [aws_subnet.private_a.id, aws_subnet.private_b.id]
+  description = "Private subnets for RDS; instance remains non-public"
+  subnet_ids   = [aws_subnet.rds_private_a.id, aws_subnet.rds_private_b.id]
 
   tags = local.common_tags
 }
@@ -573,8 +617,8 @@ output "public_subnet_ids" {
 }
 
 output "private_subnet_ids" {
-  description = "Deprecated compatibility alias. These subnet resources are now public subnets."
-  value       = [aws_subnet.private_a.id, aws_subnet.private_b.id]
+  description = "Private subnet IDs for RDS and private management resources."
+  value       = [aws_subnet.rds_private_a.id, aws_subnet.rds_private_b.id]
 }
 
 output "alb_dns_name" {
@@ -675,7 +719,7 @@ output "aws_region" {
 }
 
 output "temporary_ec2_subnet_id" {
-  value = aws_subnet.private_a.id
+  value = aws_subnet.rds_private_a.id
 }
 
 output "temporary_ec2_security_group_id" {
