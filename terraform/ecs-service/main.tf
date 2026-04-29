@@ -46,9 +46,9 @@ variable "vpc_id" {
   description = "VPC ID created by the infrastructure stack."
 }
 
-variable "public_subnet_ids" {
+variable "private_subnet_ids" {
   type        = list(string)
-  description = "Public subnet IDs created by the infrastructure stack for the ECS service ENIs."
+  description = "Private subnet IDs created by the infrastructure stack for the ECS service ENIs."
 }
 
 variable "alb_security_group_id" {
@@ -68,12 +68,65 @@ variable "target_group_arn" {
 
 variable "alb_listener_arn" {
   type        = string
-  description = "ALB listener ARN created by the infrastructure stack. Used to ensure the listener exists before the ECS service is created."
+  description = "ALB listener ARN created by the infrastructure stack. Pass this from the infrastructure stack so the ECS deploy depends on the first stack being applied first."
 }
 
 variable "db_secret_arn" {
   type        = string
   description = "Secrets Manager secret ARN created by the infrastructure stack. Must contain engine, host, port, dbname, username, and password JSON keys."
+}
+
+variable "app_base_url" {
+  type        = string
+  description = "Public CloudFront application URL, for example https://abc123.cloudfront.net."
+}
+
+variable "allowed_hostname" {
+  type        = string
+  description = "CloudFront hostname only, for example abc123.cloudfront.net. Used by server.js to reject direct ALB host access."
+}
+
+variable "cognito_domain" {
+  type        = string
+  description = "Cognito Hosted UI domain URL, for example https://my-domain.auth.us-east-1.amazoncognito.com."
+}
+
+variable "cognito_user_pool_id" {
+  type        = string
+  description = "Cognito user pool ID from the infrastructure stack."
+}
+
+variable "cognito_client_id" {
+  type        = string
+  description = "Cognito user pool client ID from the infrastructure stack."
+}
+
+variable "cognito_client_secret" {
+  type        = string
+  description = "Cognito user pool client secret from the infrastructure stack. Pass from GitHub Actions or Terraform output."
+  sensitive   = true
+}
+
+variable "cognito_callback_url" {
+  type        = string
+  description = "Cognito callback URL, usually https://<cloudfront-domain>/auth/callback."
+}
+
+variable "cognito_logout_url" {
+  type        = string
+  description = "Cognito logout return URL, usually https://<cloudfront-domain>/."
+}
+
+variable "session_secret" {
+  type        = string
+  description = "Long random Express session secret supplied by GitHub Actions secret SESSION_SECRET."
+  sensitive   = true
+}
+
+variable "session_cookie_secure" {
+  type        = bool
+  description = "Set true when the app is accessed through HTTPS CloudFront."
+  default     = true
 }
 
 variable "desired_count" {
@@ -123,6 +176,30 @@ resource "aws_ecs_cluster" "main" {
   tags = local.common_tags
 }
 
+resource "aws_cloudwatch_log_group" "app" {
+  name              = "/ecs/healthcare-app-sandbox"
+  retention_in_days = 7
+
+  tags = local.common_tags
+}
+
+resource "aws_secretsmanager_secret" "app" {
+  name                    = "healthcare-app-runtime-secrets-sandbox"
+  description             = "Runtime secrets for healthcare ECS app: Cognito client secret and Express session secret"
+  recovery_window_in_days = 0
+
+  tags = local.common_tags
+}
+
+resource "aws_secretsmanager_secret_version" "app" {
+  secret_id = aws_secretsmanager_secret.app.id
+
+  secret_string = jsonencode({
+    COGNITO_CLIENT_SECRET = var.cognito_client_secret
+    SESSION_SECRET        = var.session_secret
+  })
+}
+
 resource "aws_iam_role" "ecs_task_execution_role" {
   name = "healthcare-ecs-exec-sandbox"
 
@@ -145,8 +222,8 @@ resource "aws_iam_role_policy_attachment" "ecs_task_execution_policy" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
 }
 
-resource "aws_iam_role_policy" "ecs_read_db_secret" {
-  name = "AllowReadDbSecret"
+resource "aws_iam_role_policy" "ecs_read_runtime_secrets" {
+  name = "AllowReadRuntimeSecrets"
   role = aws_iam_role.ecs_task_execution_role.id
 
   policy = jsonencode({
@@ -156,7 +233,10 @@ resource "aws_iam_role_policy" "ecs_read_db_secret" {
       Action = [
         "secretsmanager:GetSecretValue"
       ]
-      Resource = var.db_secret_arn
+      Resource = [
+        var.db_secret_arn,
+        aws_secretsmanager_secret.app.arn
+      ]
     }]
   })
 }
@@ -179,6 +259,53 @@ resource "aws_ecs_task_definition" "app" {
         {
           containerPort = local.container_port
           protocol      = "tcp"
+        }
+      ]
+
+      environment = [
+        {
+          name  = "NODE_ENV"
+          value = "production"
+        },
+        {
+          name  = "PORT"
+          value = tostring(local.container_port)
+        },
+        {
+          name  = "APP_BASE_URL"
+          value = var.app_base_url
+        },
+        {
+          name  = "ALLOWED_HOSTNAME"
+          value = var.allowed_hostname
+        },
+        {
+          name  = "AWS_REGION"
+          value = local.aws_region
+        },
+        {
+          name  = "COGNITO_DOMAIN"
+          value = var.cognito_domain
+        },
+        {
+          name  = "COGNITO_USER_POOL_ID"
+          value = var.cognito_user_pool_id
+        },
+        {
+          name  = "COGNITO_CLIENT_ID"
+          value = var.cognito_client_id
+        },
+        {
+          name  = "COGNITO_CALLBACK_URL"
+          value = var.cognito_callback_url
+        },
+        {
+          name  = "COGNITO_LOGOUT_URL"
+          value = var.cognito_logout_url
+        },
+        {
+          name  = "SESSION_COOKIE_SECURE"
+          value = tostring(var.session_cookie_secure)
         }
       ]
 
@@ -206,14 +333,32 @@ resource "aws_ecs_task_definition" "app" {
         {
           name      = "DB_PASS"
           valueFrom = "${var.db_secret_arn}:password::"
+        },
+        {
+          name      = "COGNITO_CLIENT_SECRET"
+          valueFrom = "${aws_secretsmanager_secret.app.arn}:COGNITO_CLIENT_SECRET::"
+        },
+        {
+          name      = "SESSION_SECRET"
+          valueFrom = "${aws_secretsmanager_secret.app.arn}:SESSION_SECRET::"
         }
       ]
+
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          awslogs-group         = aws_cloudwatch_log_group.app.name
+          awslogs-region        = local.aws_region
+          awslogs-stream-prefix = "ecs"
+        }
+      }
     }
   ])
 
   depends_on = [
     aws_iam_role_policy_attachment.ecs_task_execution_policy,
-    aws_iam_role_policy.ecs_read_db_secret
+    aws_iam_role_policy.ecs_read_runtime_secrets,
+    aws_secretsmanager_secret_version.app
   ]
 
   tags = local.common_tags
@@ -227,8 +372,8 @@ resource "aws_ecs_service" "app" {
   task_definition = aws_ecs_task_definition.app.arn
 
   network_configuration {
-    assign_public_ip = true
-    subnets          = var.public_subnet_ids
+    assign_public_ip = false
+    subnets          = var.private_subnet_ids
     security_groups  = [aws_security_group.fargate.id]
   }
 
@@ -241,7 +386,7 @@ resource "aws_ecs_service" "app" {
   depends_on = [
     aws_security_group_rule.rds_from_fargate,
     aws_iam_role_policy_attachment.ecs_task_execution_policy,
-    aws_iam_role_policy.ecs_read_db_secret
+    aws_iam_role_policy.ecs_read_runtime_secrets
   ]
 
   tags = local.common_tags
@@ -273,6 +418,14 @@ output "ecs_task_image" {
 
 output "fargate_security_group_id" {
   value = aws_security_group.fargate.id
+}
+
+output "app_runtime_secret_arn" {
+  value = aws_secretsmanager_secret.app.arn
+}
+
+output "cloudwatch_log_group_name" {
+  value = aws_cloudwatch_log_group.app.name
 }
 
 output "aws_region" {
