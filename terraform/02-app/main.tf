@@ -15,11 +15,6 @@ provider "aws" {
   region = "us-east-1"
 }
 
-variable "image_uri" {
-  type        = string
-  description = "Full Docker image URI pushed by GitHub Actions, for example: ??????.dkr.ecr.us-east-1.amazonaws.com/customermanagementapp:github-sha"
-}
-
 variable "db_password" {
   type        = string
   description = "RDS MySQL password supplied by GitHub Actions secret DB_PASSWORD"
@@ -35,15 +30,19 @@ locals {
   private_subnet_a_cidr = "10.20.101.0/24"
   private_subnet_b_cidr = "10.20.102.0/24"
 
-  container_port   = 3000
+  ecr_repository_name = "customermanagementapp"
+
+  container_port    = 3000
   health_check_path = "/"
-  cpu              = 256
-  memory           = 512
 
   db_engine   = "mysql"
   db_name     = "healthcaredb"
   db_username = "admin"
   db_port     = 3306
+
+  cloudfront_origin_id = "alb-origin"
+  cognito_callback_url = "https://${aws_cloudfront_distribution.app.domain_name}/"
+  cognito_logout_url   = "https://${aws_cloudfront_distribution.app.domain_name}/"
 
   common_tags = {
     Environment = local.environment
@@ -54,8 +53,37 @@ data "aws_availability_zones" "available" {
   state = "available"
 }
 
+data "aws_caller_identity" "current" {}
+
+data "aws_region" "current" {}
+
 data "aws_ssm_parameter" "al2023_ami" {
   name = "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64"
+}
+
+data "aws_cloudfront_cache_policy" "caching_disabled" {
+  name = "Managed-CachingDisabled"
+}
+
+data "aws_cloudfront_origin_request_policy" "all_viewer" {
+  name = "Managed-AllViewer"
+}
+
+resource "aws_ecr_repository" "app" {
+  name                 = local.ecr_repository_name
+  image_tag_mutability = "MUTABLE"
+
+  image_scanning_configuration {
+    scan_on_push = true
+  }
+
+  encryption_configuration {
+    encryption_type = "AES256"
+  }
+
+  tags = merge(local.common_tags, {
+    Name = local.ecr_repository_name
+  })
 }
 
 resource "aws_vpc" "main" {
@@ -168,7 +196,7 @@ resource "aws_security_group" "alb" {
   vpc_id      = aws_vpc.main.id
 
   ingress {
-    description = "HTTP from internet"
+    description = "HTTP from internet and CloudFront"
     protocol    = "tcp"
     from_port   = 80
     to_port     = 80
@@ -184,31 +212,6 @@ resource "aws_security_group" "alb" {
 
   tags = merge(local.common_tags, {
     Name = "AlbSG"
-  })
-}
-
-resource "aws_security_group" "fargate" {
-  name        = "healthcare-fargate-sg"
-  description = "Allow ALB to Fargate tasks"
-  vpc_id      = aws_vpc.main.id
-
-  ingress {
-    description     = "App traffic from ALB"
-    protocol        = "tcp"
-    from_port       = local.container_port
-    to_port         = local.container_port
-    security_groups = [aws_security_group.alb.id]
-  }
-
-  egress {
-    protocol    = "-1"
-    from_port   = 0
-    to_port     = 0
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  tags = merge(local.common_tags, {
-    Name = "FargateSG"
   })
 }
 
@@ -231,16 +234,8 @@ resource "aws_security_group" "ec2" {
 
 resource "aws_security_group" "rds" {
   name        = "healthcare-rds-sg"
-  description = "Allow MySQL access from Fargate and EC2"
+  description = "Allow MySQL access from EC2 SSM instance"
   vpc_id      = aws_vpc.main.id
-
-  ingress {
-    description     = "MySQL from Fargate tasks"
-    protocol        = "tcp"
-    from_port       = local.db_port
-    to_port         = local.db_port
-    security_groups = [aws_security_group.fargate.id]
-  }
 
   ingress {
     description     = "MySQL from EC2 SSM instance"
@@ -271,23 +266,23 @@ resource "aws_db_subnet_group" "main" {
 }
 
 resource "aws_db_instance" "health" {
-  identifier             = "db-health"
-  instance_class         = "db.t3.micro"
-  allocated_storage      = 20
-  storage_type           = "gp2"
-  engine                 = local.db_engine
-  db_name                = local.db_name
-  username               = local.db_username
-  password               = var.db_password
-  port                   = local.db_port
-  availability_zone      = data.aws_availability_zones.available.names[0]
-  multi_az               = false
-  publicly_accessible    = false
+  identifier              = "db-health"
+  instance_class          = "db.t3.micro"
+  allocated_storage       = 20
+  storage_type            = "gp2"
+  engine                  = local.db_engine
+  db_name                 = local.db_name
+  username                = local.db_username
+  password                = var.db_password
+  port                    = local.db_port
+  availability_zone       = data.aws_availability_zones.available.names[0]
+  multi_az                = false
+  publicly_accessible     = false
   backup_retention_period = 0
-  deletion_protection    = false
-  skip_final_snapshot    = true
-  vpc_security_group_ids = [aws_security_group.rds.id]
-  db_subnet_group_name   = aws_db_subnet_group.main.name
+  deletion_protection     = false
+  skip_final_snapshot     = true
+  vpc_security_group_ids  = [aws_security_group.rds.id]
+  db_subnet_group_name    = aws_db_subnet_group.main.name
 
   tags = merge(local.common_tags, {
     Name = "db-health"
@@ -353,135 +348,118 @@ resource "aws_lb_listener" "http" {
   }
 }
 
-resource "aws_ecs_cluster" "main" {
-  name = "healthcare-ecs-cluster"
+resource "aws_cloudfront_distribution" "app" {
+  enabled         = true
+  is_ipv6_enabled = true
+  comment         = "CloudFront distribution for ${local.app_name} ${local.environment}"
+  price_class     = "PriceClass_100"
 
-  tags = local.common_tags
-}
+  origin {
+    domain_name = aws_lb.main.dns_name
+    origin_id   = local.cloudfront_origin_id
 
-resource "aws_iam_role" "ecs_task_execution_role" {
-  name = "healthcare-ecs-exec-sandbox"
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect = "Allow"
-      Principal = {
-        Service = "ecs-tasks.amazonaws.com"
-      }
-      Action = "sts:AssumeRole"
-    }]
-  })
-
-  tags = local.common_tags
-}
-
-resource "aws_iam_role_policy_attachment" "ecs_task_execution_policy" {
-  role       = aws_iam_role.ecs_task_execution_role.name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
-}
-
-resource "aws_iam_role_policy" "ecs_read_db_secret" {
-  name = "AllowReadDbSecret"
-  role = aws_iam_role.ecs_task_execution_role.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect = "Allow"
-      Action = [
-        "secretsmanager:GetSecretValue"
-      ]
-      Resource = aws_secretsmanager_secret.db.arn
-    }]
-  })
-}
-
-resource "aws_ecs_task_definition" "app" {
-  family                   = "healthcare-app-sandbox"
-  requires_compatibilities = ["FARGATE"]
-  network_mode             = "awsvpc"
-  cpu                      = tostring(local.cpu)
-  memory                   = tostring(local.memory)
-  execution_role_arn       = aws_iam_role.ecs_task_execution_role.arn
-
-  container_definitions = jsonencode([
-    {
-      name      = "app"
-      image     = var.image_uri
-      essential = true
-
-      portMappings = [
-        {
-          containerPort = local.container_port
-          protocol      = "tcp"
-        }
-      ]
-
-      secrets = [
-        {
-          name      = "DB_ENGINE"
-          valueFrom = "${aws_secretsmanager_secret.db.arn}:engine::"
-        },
-        {
-          name      = "DB_HOST"
-          valueFrom = "${aws_secretsmanager_secret.db.arn}:host::"
-        },
-        {
-          name      = "DB_PORT"
-          valueFrom = "${aws_secretsmanager_secret.db.arn}:port::"
-        },
-        {
-          name      = "DB_NAME"
-          valueFrom = "${aws_secretsmanager_secret.db.arn}:dbname::"
-        },
-        {
-          name      = "DB_USER"
-          valueFrom = "${aws_secretsmanager_secret.db.arn}:username::"
-        },
-        {
-          name      = "DB_PASS"
-          valueFrom = "${aws_secretsmanager_secret.db.arn}:password::"
-        }
-      ]
+    custom_origin_config {
+      http_port              = 80
+      https_port             = 443
+      origin_protocol_policy = "http-only"
+      origin_ssl_protocols   = ["TLSv1.2"]
     }
-  ])
+  }
+
+  default_cache_behavior {
+    target_origin_id       = local.cloudfront_origin_id
+    viewer_protocol_policy = "redirect-to-https"
+
+    allowed_methods = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]
+    cached_methods  = ["GET", "HEAD"]
+
+    cache_policy_id          = data.aws_cloudfront_cache_policy.caching_disabled.id
+    origin_request_policy_id = data.aws_cloudfront_origin_request_policy.all_viewer.id
+  }
+
+  restrictions {
+    geo_restriction {
+      restriction_type = "none"
+    }
+  }
+
+  viewer_certificate {
+    cloudfront_default_certificate = true
+  }
 
   depends_on = [
-    aws_iam_role_policy_attachment.ecs_task_execution_policy,
-    aws_iam_role_policy.ecs_read_db_secret,
-    aws_secretsmanager_secret_version.db
+    aws_lb_listener.http
   ]
 
   tags = local.common_tags
 }
 
-resource "aws_ecs_service" "app" {
-  name            = "healthcare-fargate-service"
-  cluster         = aws_ecs_cluster.main.id
-  launch_type     = "FARGATE"
-  desired_count   = 1
-  task_definition = aws_ecs_task_definition.app.arn
+resource "aws_cognito_user_pool" "app" {
+  name = "${local.app_name}-${local.environment}-user-pool"
 
-  network_configuration {
-    assign_public_ip = true
-    subnets          = [aws_subnet.public_a.id, aws_subnet.public_b.id]
-    security_groups  = [aws_security_group.fargate.id]
+  username_attributes      = ["email"]
+  auto_verified_attributes = ["email"]
+  mfa_configuration        = "OFF"
+
+  admin_create_user_config {
+    allow_admin_create_user_only = true
   }
 
-  load_balancer {
-    container_name   = "app"
-    container_port   = local.container_port
-    target_group_arn = aws_lb_target_group.app.arn
+  account_recovery_setting {
+    recovery_mechanism {
+      name     = "verified_email"
+      priority = 1
+    }
   }
 
- 
-  depends_on = [
-  aws_lb_listener.http,
-  aws_route.public_internet
-  ]
+  password_policy {
+    minimum_length                   = 8
+    require_lowercase                = true
+    require_numbers                  = true
+    require_symbols                  = false
+    require_uppercase                = true
+    temporary_password_validity_days = 7
+  }
+
+  schema {
+    name                = "email"
+    attribute_data_type = "String"
+    mutable             = true
+    required            = true
+
+    string_attribute_constraints {
+      min_length = 5
+      max_length = 2048
+    }
+  }
 
   tags = local.common_tags
+}
+
+resource "aws_cognito_user_pool_client" "web" {
+  name         = "${local.app_name}-${local.environment}-web-client"
+  user_pool_id = aws_cognito_user_pool.app.id
+
+  generate_secret                      = false
+  supported_identity_providers         = ["COGNITO"]
+  allowed_oauth_flows_user_pool_client = true
+  allowed_oauth_flows                  = ["code"]
+  allowed_oauth_scopes                 = ["email", "openid", "profile"]
+  callback_urls                        = [local.cognito_callback_url]
+  logout_urls                          = [local.cognito_logout_url]
+
+  explicit_auth_flows = [
+    "ALLOW_REFRESH_TOKEN_AUTH",
+    "ALLOW_USER_PASSWORD_AUTH",
+    "ALLOW_USER_SRP_AUTH"
+  ]
+
+  prevent_user_existence_errors = "ENABLED"
+}
+
+resource "aws_cognito_user_pool_domain" "main" {
+  domain       = "${local.app_name}-${local.environment}-${data.aws_caller_identity.current.account_id}"
+  user_pool_id = aws_cognito_user_pool.app.id
 }
 
 resource "aws_iam_role" "ec2_role" {
@@ -527,13 +505,48 @@ resource "aws_iam_instance_profile" "ec2_profile" {
   role = aws_iam_role.ec2_role.name
 }
 
-
 output "vpc_id" {
   value = aws_vpc.main.id
 }
 
 output "alb_dns_name" {
   value = aws_lb.main.dns_name
+}
+
+output "cloudfront_domain_name" {
+  value = aws_cloudfront_distribution.app.domain_name
+}
+
+output "cloudfront_url" {
+  value = "https://${aws_cloudfront_distribution.app.domain_name}"
+}
+
+output "cognito_user_pool_id" {
+  value = aws_cognito_user_pool.app.id
+}
+
+output "cognito_user_pool_client_id" {
+  value = aws_cognito_user_pool_client.web.id
+}
+
+output "cognito_domain" {
+  value = "https://${aws_cognito_user_pool_domain.main.domain}.auth.${data.aws_region.current.name}.amazoncognito.com"
+}
+
+output "cognito_login_url" {
+  value = "https://${aws_cognito_user_pool_domain.main.domain}.auth.${data.aws_region.current.name}.amazoncognito.com/login?client_id=${aws_cognito_user_pool_client.web.id}&response_type=code&scope=email+openid+profile&redirect_uri=${urlencode(local.cognito_callback_url)}"
+}
+
+output "cognito_callback_url" {
+  value = local.cognito_callback_url
+}
+
+output "cognito_logout_url" {
+  value = local.cognito_logout_url
+}
+
+output "ecr_repository_url" {
+  value = aws_ecr_repository.app.repository_url
 }
 
 output "rds_endpoint" {
@@ -548,11 +561,6 @@ output "db_secret_arn" {
   value = aws_secretsmanager_secret.db.arn
 }
 
-
-output "image_uri_used_by_ecs" {
-  value = var.image_uri
-}
-
 output "db_name" {
   value = local.db_name
 }
@@ -562,7 +570,7 @@ output "db_username" {
 }
 
 output "aws_region" {
-  value = "us-east-1"
+  value = data.aws_region.current.name
 }
 
 output "temporary_ec2_subnet_id" {
