@@ -35,6 +35,12 @@ variable "ecr_repository_url" {
   description = "ECR repository URL from the infrastructure stack, for example 123456789012.dkr.ecr.us-east-1.amazonaws.com/customermanagementapp."
 }
 
+variable "cloudfront_secret" {
+  type        = string
+  description = "Custom secret header value supplied by GitHub Actions"
+  sensitive   = true
+}
+
 variable "image_tag" {
   type        = string
   description = "Image tag to deploy from the ECR repository. GitHub Actions can pass the commit SHA here."
@@ -197,6 +203,7 @@ resource "aws_secretsmanager_secret_version" "app" {
   secret_string = jsonencode({
     COGNITO_CLIENT_SECRET = var.cognito_client_secret
     SESSION_SECRET        = var.session_secret
+    CLOUDFRONT_SECRET     = var.cloudfront_secret
   })
 }
 
@@ -341,7 +348,12 @@ resource "aws_ecs_task_definition" "app" {
         {
           name      = "SESSION_SECRET"
           valueFrom = "${aws_secretsmanager_secret.app.arn}:SESSION_SECRET::"
+        },
+        {
+          name      = "CLOUDFRONT_SECRET" 
+          valueFrom = "${aws_secretsmanager_secret.app.arn}:CLOUDFRONT_SECRET::"
         }
+
       ]
 
       logConfiguration = {
