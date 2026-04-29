@@ -667,3 +667,7 @@ output "temporary_ec2_instance_profile_name" {
 output "temporary_ec2_ami_id" {
   value = nonsensitive(data.aws_ssm_parameter.al2023_ami.value)
 }
+
+output "internet_gateway_id" {
+  value = aws_internet_gateway.main.id
+}
