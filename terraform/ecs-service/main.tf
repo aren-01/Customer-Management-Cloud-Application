@@ -25,8 +25,8 @@ locals {
     Environment = local.environment
   }
 
-  # Prefer the new public_subnet_ids input. Keep private_subnet_ids as a backward-compatible alias.
-  ecs_subnet_ids = length(var.public_subnet_ids) > 0 ? var.public_subnet_ids : var.private_subnet_ids
+  # ECS must run in the public subnets from the infrastructure stack.
+  ecs_subnet_ids = var.public_subnet_ids
 }
 
 provider "aws" {
@@ -58,15 +58,14 @@ variable "vpc_id" {
 variable "public_subnet_ids" {
   type        = list(string)
   description = "Public subnet IDs created by the infrastructure stack for the ECS service ENIs."
-  default     = []
+
+  validation {
+    condition     = length(var.public_subnet_ids) >= 2
+    error_message = "Pass at least two public subnet IDs. Do not pass private_subnet_ids for the ECS service."
+  }
 }
 
-variable "private_subnet_ids" {
-  type        = list(string)
-  description = "Deprecated compatibility alias for public_subnet_ids. The ECS service now expects public subnets."
-  default     = []
-}
-
+# private_subnet_ids is intentionally not used by ECS. RDS stays in private subnets in the infrastructure stack.
 variable "alb_security_group_id" {
   type        = string
   description = "ALB security group ID created by the infrastructure stack."
