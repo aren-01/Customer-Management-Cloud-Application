@@ -203,7 +203,7 @@ jobs:
           echo "aws_region=$(terraform output -raw aws_region)" >> "$GITHUB_OUTPUT"
           echo "vpc_id=$(terraform output -raw vpc_id)" >> "$GITHUB_OUTPUT"
           echo "internet_gateway_id=$(terraform output -raw internet_gateway_id)" >> "$GITHUB_OUTPUT"
-          echo "private_subnet_ids=$(terraform output -json private_subnet_ids)" >> "$GITHUB_OUTPUT"
+          echo "public_subnet_ids=$(terraform output -json public_subnet_ids)" >> "$GITHUB_OUTPUT"
           echo "alb_security_group_id=$(terraform output -raw alb_security_group_id)" >> "$GITHUB_OUTPUT"
           echo "rds_security_group_id=$(terraform output -raw rds_security_group_id)" >> "$GITHUB_OUTPUT"
           echo "target_group_arn=$(terraform output -raw target_group_arn)" >> "$GITHUB_OUTPUT"
@@ -228,7 +228,7 @@ jobs:
           ECR_REPOSITORY_URL: ${{ needs.deploy-infrastructure.outputs.ecr_repository_url }}
           IMAGE_TAG: ${{ needs.build-and-push.outputs.image_tag }}
           VPC_ID: ${{ steps.infra.outputs.vpc_id }}
-          PRIVATE_SUBNET_IDS: ${{ steps.infra.outputs.private_subnet_ids }}
+          PUBLIC_SUBNET_IDS: ${{ steps.infra.outputs.public_subnet_ids }}
           ALB_SECURITY_GROUP_ID: ${{ steps.infra.outputs.alb_security_group_id }}
           RDS_SECURITY_GROUP_ID: ${{ steps.infra.outputs.rds_security_group_id }}
           TARGET_GROUP_ARN: ${{ steps.infra.outputs.target_group_arn }}
@@ -260,7 +260,7 @@ jobs:
             -var="ecr_repository_url=${ECR_REPOSITORY_URL}" \
             -var="image_tag=${IMAGE_TAG}" \
             -var="vpc_id=${VPC_ID}" \
-            -var="private_subnet_ids=${PRIVATE_SUBNET_IDS}" \
+            -var="public_subnet_ids=${PUBLIC_SUBNET_IDS}" \
             -var="alb_security_group_id=${ALB_SECURITY_GROUP_ID}" \
             -var="rds_security_group_id=${RDS_SECURITY_GROUP_ID}" \
             -var="target_group_arn=${TARGET_GROUP_ARN}" \
