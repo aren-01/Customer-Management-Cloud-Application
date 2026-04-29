@@ -74,7 +74,7 @@ jobs:
 
       - name: Terraform destroy app infrastructure
         if: steps.tfstate.outputs.bucket_exists == 'true'
-        working-directory: terraform/02-app
+        working-directory: terraform/infrastructure
         env:
           TF_VAR_image_uri: placeholder
           TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
@@ -219,7 +219,7 @@ jobs:
 
       - name: Terraform destroy ECR
         if: steps.tfstate.outputs.bucket_exists == 'true'
-        working-directory: terraform/01-ecr
+        working-directory: terraform/ecs-service
         run: |
           set -euo pipefail
 
