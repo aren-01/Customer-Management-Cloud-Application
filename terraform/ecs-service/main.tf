@@ -25,7 +25,7 @@ locals {
     Environment = local.environment
   }
 
-  # ECS tasks run in public subnets and receive public ENI IPs.
+  # ECS tasks run only in public subnets and receive public ENI IPs.
   ecs_subnet_ids = var.public_subnet_ids
 }
 
@@ -57,7 +57,7 @@ variable "vpc_id" {
 
 variable "public_subnet_ids" {
   type        = list(string)
-  description = "Public subnet IDs created by the infrastructure stack for the ECS service ENIs."
+  description = "Public subnet IDs created by the infrastructure stack for the ECS service ENIs. Pass the infrastructure stack public_subnet_ids output."
 
   validation {
     condition     = length(var.public_subnet_ids) >= 2
