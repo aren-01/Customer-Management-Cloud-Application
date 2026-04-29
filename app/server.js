@@ -41,13 +41,12 @@ const COGNITO_JWKS = createRemoteJWKSet(new URL(`${COGNITO_ISSUER}/.well-known/j
 const CLOUDFRONT_SECRET = process.env.CLOUDFRONT_SECRET; // Grab secret from ENV
 
 // Trust CloudFront/ALB proxy headers.
+
 app.set("trust proxy", true);
 
-// If CloudFront provides the viewer protocol header, let Express understand the original viewer protocol.
+
 app.use((req, res, next) => {
-  if (req.headers["cloudfront-forwarded-proto"] === "https") {
-    req.headers["x-forwarded-proto"] = "https";
-  }
+  req.headers["x-forwarded-proto"] = "https";
   next();
 });
 
