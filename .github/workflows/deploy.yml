@@ -84,6 +84,7 @@ jobs:
         working-directory: terraform/infrastructure
         env:
           TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
+          TF_VAR_cloudfront_secret: ${{ secrets.CLOUDFRONT_SECRET }}
         run: |
           set -euo pipefail
 
@@ -241,6 +242,7 @@ jobs:
           COGNITO_CALLBACK_URL: ${{ steps.infra.outputs.cognito_callback_url }}
           COGNITO_LOGOUT_URL: ${{ steps.infra.outputs.cognito_logout_url }}
           SESSION_SECRET: ${{ secrets.SESSION_SECRET }}
+          CLOUDFRONT_SECRET: ${{ secrets.CLOUDFRONT_SECRET }}
         run: |
           set -euo pipefail
 
@@ -272,7 +274,8 @@ jobs:
             -var="cognito_client_secret=${COGNITO_CLIENT_SECRET}" \
             -var="cognito_callback_url=${COGNITO_CALLBACK_URL}" \
             -var="cognito_logout_url=${COGNITO_LOGOUT_URL}" \
-            -var="session_secret=${SESSION_SECRET}"
+            -var="session_secret=${SESSION_SECRET}" \
+            -var="cloudfront_secret=${CLOUDFRONT_SECRET}"
 
       - name: Terraform apply temporary DB import stack
         id: db_import_apply
