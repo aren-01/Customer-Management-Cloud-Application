@@ -25,7 +25,7 @@ locals {
     Environment = local.environment
   }
 
-  # ECS must run in the public subnets from the infrastructure stack.
+  # ECS tasks run in public subnets and receive public ENI IPs.
   ecs_subnet_ids = var.public_subnet_ids
 }
 
@@ -161,6 +161,14 @@ resource "aws_security_group" "fargate" {
     from_port       = local.container_port
     to_port         = local.container_port
     security_groups = [var.alb_security_group_id]
+  }
+
+  ingress {
+    description = "Public app traffic to ECS tasks"
+    protocol    = "tcp"
+    from_port   = local.container_port
+    to_port     = local.container_port
+    cidr_blocks = ["0.0.0.0/0"]
   }
 
   egress {
@@ -439,6 +447,14 @@ output "ecs_task_image" {
 
 output "fargate_security_group_id" {
   value = aws_security_group.fargate.id
+}
+
+output "ecs_assign_public_ip" {
+  value = true
+}
+
+output "ecs_public_subnet_ids" {
+  value = local.ecs_subnet_ids
 }
 
 output "app_runtime_secret_arn" {
