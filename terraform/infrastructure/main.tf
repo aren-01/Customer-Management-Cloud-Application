@@ -21,6 +21,12 @@ variable "db_password" {
   sensitive   = true
 }
 
+variable "cloudfront_secret" {
+  type        = string
+  description = "Custom secret header value supplied by GitHub Actions"
+  sensitive   = true
+}
+
 locals {
   environment           = "sandbox"
   app_name              = "healthcare"
@@ -404,6 +410,11 @@ resource "aws_cloudfront_distribution" "app" {
       vpc_origin_id            = aws_cloudfront_vpc_origin.app.id
       origin_keepalive_timeout = 5
       origin_read_timeout      = 30
+    }
+
+    custom_header {
+      name  = "X-CloudFront-Secret"
+      value = var.cloudfront_secret
     }
   }
 
