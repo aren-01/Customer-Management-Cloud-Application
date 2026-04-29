@@ -6,7 +6,7 @@ terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 5.0"
+      version = ">= 5.82.0, < 7.0"
     }
   }
 }
@@ -40,8 +40,8 @@ locals {
   db_username = "admin"
   db_port     = 3306
 
-  cloudfront_origin_id = "alb-origin"
-  cognito_callback_url = "https://${aws_cloudfront_distribution.app.domain_name}/"
+  cloudfront_origin_id = "private-alb-origin"
+  cognito_callback_url = "https://${aws_cloudfront_distribution.app.domain_name}/auth/callback"
   cognito_logout_url   = "https://${aws_cloudfront_distribution.app.domain_name}/"
 
   common_tags = {
@@ -69,9 +69,14 @@ data "aws_cloudfront_origin_request_policy" "all_viewer" {
   name = "Managed-AllViewer"
 }
 
+data "aws_ec2_managed_prefix_list" "cloudfront_origin_facing" {
+  name = "com.amazonaws.global.cloudfront.origin-facing"
+}
+
 resource "aws_ecr_repository" "app" {
   name                 = local.ecr_repository_name
   image_tag_mutability = "MUTABLE"
+  force_delete         = true
 
   image_scanning_configuration {
     scan_on_push = true
@@ -192,15 +197,15 @@ resource "aws_route_table_association" "private_b" {
 
 resource "aws_security_group" "alb" {
   name        = "healthcare-alb-sg"
-  description = "Allow HTTP to ALB"
+  description = "Allow HTTP to private ALB only from CloudFront"
   vpc_id      = aws_vpc.main.id
 
   ingress {
-    description = "HTTP from internet and CloudFront"
-    protocol    = "tcp"
-    from_port   = 80
-    to_port     = 80
-    cidr_blocks = ["0.0.0.0/0"]
+    description     = "HTTP from CloudFront VPC origin"
+    protocol        = "tcp"
+    from_port       = 80
+    to_port         = 80
+    prefix_list_ids = [data.aws_ec2_managed_prefix_list.cloudfront_origin_facing.id]
   }
 
   egress {
@@ -234,7 +239,7 @@ resource "aws_security_group" "ec2" {
 
 resource "aws_security_group" "rds" {
   name        = "healthcare-rds-sg"
-  description = "Allow MySQL access from EC2 SSM instance"
+  description = "Allow MySQL access from EC2 SSM instance and ECS service"
   vpc_id      = aws_vpc.main.id
 
   ingress {
@@ -313,9 +318,9 @@ resource "aws_secretsmanager_secret_version" "db" {
 
 resource "aws_lb" "main" {
   name               = "healthcare-alb"
-  internal           = false
+  internal           = true
   load_balancer_type = "application"
-  subnets            = [aws_subnet.public_a.id, aws_subnet.public_b.id]
+  subnets            = [aws_subnet.private_a.id, aws_subnet.private_b.id]
   security_groups    = [aws_security_group.alb.id]
 
   tags = local.common_tags
@@ -348,6 +353,27 @@ resource "aws_lb_listener" "http" {
   }
 }
 
+resource "aws_cloudfront_vpc_origin" "app" {
+  vpc_origin_endpoint_config {
+    name                   = "${local.app_name}-${local.environment}-vpc-origin"
+    arn                    = aws_lb.main.arn
+    http_port              = 80
+    https_port             = 443
+    origin_protocol_policy = "http-only"
+
+    origin_ssl_protocols {
+      items    = ["TLSv1.2"]
+      quantity = 1
+    }
+  }
+
+  depends_on = [
+    aws_lb.main
+  ]
+
+  tags = local.common_tags
+}
+
 resource "aws_cloudfront_distribution" "app" {
   enabled         = true
   is_ipv6_enabled = true
@@ -358,11 +384,10 @@ resource "aws_cloudfront_distribution" "app" {
     domain_name = aws_lb.main.dns_name
     origin_id   = local.cloudfront_origin_id
 
-    custom_origin_config {
-      http_port              = 80
-      https_port             = 443
-      origin_protocol_policy = "http-only"
-      origin_ssl_protocols   = ["TLSv1.2"]
+    vpc_origin_config {
+      vpc_origin_id            = aws_cloudfront_vpc_origin.app.id
+      origin_keepalive_timeout = 5
+      origin_read_timeout      = 30
     }
   }
 
@@ -388,6 +413,7 @@ resource "aws_cloudfront_distribution" "app" {
   }
 
   depends_on = [
+    aws_cloudfront_vpc_origin.app,
     aws_lb_listener.http
   ]
 
@@ -440,7 +466,7 @@ resource "aws_cognito_user_pool_client" "web" {
   name         = "${local.app_name}-${local.environment}-web-client"
   user_pool_id = aws_cognito_user_pool.app.id
 
-  generate_secret                      = false
+  generate_secret                      = true
   supported_identity_providers         = ["COGNITO"]
   allowed_oauth_flows_user_pool_client = true
   allowed_oauth_flows                  = ["code"]
@@ -509,8 +535,36 @@ output "vpc_id" {
   value = aws_vpc.main.id
 }
 
+output "public_subnet_ids" {
+  value = [aws_subnet.public_a.id, aws_subnet.public_b.id]
+}
+
+output "private_subnet_ids" {
+  value = [aws_subnet.private_a.id, aws_subnet.private_b.id]
+}
+
 output "alb_dns_name" {
   value = aws_lb.main.dns_name
+}
+
+output "alb_security_group_id" {
+  value = aws_security_group.alb.id
+}
+
+output "rds_security_group_id" {
+  value = aws_security_group.rds.id
+}
+
+output "target_group_arn" {
+  value = aws_lb_target_group.app.arn
+}
+
+output "alb_listener_arn" {
+  value = aws_lb_listener.http.arn
+}
+
+output "cloudfront_vpc_origin_id" {
+  value = aws_cloudfront_vpc_origin.app.id
 }
 
 output "cloudfront_domain_name" {
@@ -527,6 +581,11 @@ output "cognito_user_pool_id" {
 
 output "cognito_user_pool_client_id" {
   value = aws_cognito_user_pool_client.web.id
+}
+
+output "cognito_user_pool_client_secret" {
+  value     = aws_cognito_user_pool_client.web.client_secret
+  sensitive = true
 }
 
 output "cognito_domain" {
