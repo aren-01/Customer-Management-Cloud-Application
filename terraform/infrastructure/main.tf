@@ -31,8 +31,8 @@ locals {
   environment           = "sandbox"
   app_name              = "healthcare"
   vpc_cidr              = "10.20.0.0/16"
-  private_subnet_a_cidr = "10.20.101.0/24"
-  private_subnet_b_cidr = "10.20.102.0/24"
+  public_subnet_a_cidr  = "10.20.101.0/24"
+  public_subnet_b_cidr  = "10.20.102.0/24"
 
   ecr_repository_name = "customermanagementapp"
 
@@ -115,8 +115,8 @@ resource "aws_vpc" "main" {
   })
 }
 
-# CloudFront VPC Origin requires an Internet Gateway attached to the VPC.
-# It is not used as a route for the private ALB traffic.
+# Public subnets require an Internet Gateway attached to the VPC.
+# The route table below sends outbound internet traffic through this IGW.
 resource "aws_internet_gateway" "main" {
   vpc_id = aws_vpc.main.id
 
@@ -128,30 +128,35 @@ resource "aws_internet_gateway" "main" {
 resource "aws_subnet" "private_a" {
   vpc_id                  = aws_vpc.main.id
   availability_zone       = data.aws_availability_zones.available.names[0]
-  cidr_block              = local.private_subnet_a_cidr
-  map_public_ip_on_launch = false
+  cidr_block              = local.public_subnet_a_cidr
+  map_public_ip_on_launch = true
 
   tags = merge(local.common_tags, {
-    Name = "PrivateSubnet-${data.aws_availability_zones.available.names[0]}"
+    Name = "PublicSubnet-${data.aws_availability_zones.available.names[0]}"
   })
 }
 
 resource "aws_subnet" "private_b" {
   vpc_id                  = aws_vpc.main.id
   availability_zone       = data.aws_availability_zones.available.names[1]
-  cidr_block              = local.private_subnet_b_cidr
-  map_public_ip_on_launch = false
+  cidr_block              = local.public_subnet_b_cidr
+  map_public_ip_on_launch = true
 
   tags = merge(local.common_tags, {
-    Name = "PrivateSubnet-${data.aws_availability_zones.available.names[1]}"
+    Name = "PublicSubnet-${data.aws_availability_zones.available.names[1]}"
   })
 }
 
 resource "aws_route_table" "private" {
   vpc_id = aws_vpc.main.id
 
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.main.id
+  }
+
   tags = merge(local.common_tags, {
-    Name = "PrivateRouteTable"
+    Name = "PublicRouteTable"
   })
 }
 
@@ -167,7 +172,7 @@ resource "aws_route_table_association" "private_b" {
 
 resource "aws_security_group" "alb" {
   name        = "healthcare-alb-sg"
-  description = "Allow HTTP to private ALB only from CloudFront"
+  description = "Allow HTTP to ALB only from CloudFront"
   vpc_id      = aws_vpc.main.id
 
   ingress {
@@ -192,7 +197,7 @@ resource "aws_security_group" "alb" {
 
 resource "aws_security_group" "vpc_endpoints" {
   name        = "healthcare-vpc-endpoints-sg"
-  description = "Allow private subnets to reach AWS service VPC endpoints"
+  description = "Allow VPC subnets to reach AWS service VPC endpoints"
   vpc_id      = aws_vpc.main.id
 
   ingress {
@@ -285,7 +290,7 @@ resource "aws_vpc_endpoint" "s3" {
 
 resource "aws_db_subnet_group" "main" {
   name        = "healthcare-db-subnet-group"
-  description = "Private subnets for RDS"
+  description = "Subnets for RDS; instance remains non-public"
   subnet_ids   = [aws_subnet.private_a.id, aws_subnet.private_b.id]
 
   tags = local.common_tags
@@ -339,7 +344,7 @@ resource "aws_secretsmanager_secret_version" "db" {
 
 resource "aws_lb" "main" {
   name               = "healthcare-alb"
-  internal           = true
+  internal           = true # Keep internal because CloudFront VPC Origin targets an internal ALB.
   load_balancer_type = "application"
   subnets            = [aws_subnet.private_a.id, aws_subnet.private_b.id]
   security_groups    = [aws_security_group.alb.id]
@@ -562,8 +567,14 @@ output "vpc_id" {
   value = aws_vpc.main.id
 }
 
+output "public_subnet_ids" {
+  description = "Public subnet IDs for ALB and ECS service ENIs."
+  value       = [aws_subnet.private_a.id, aws_subnet.private_b.id]
+}
+
 output "private_subnet_ids" {
-  value = [aws_subnet.private_a.id, aws_subnet.private_b.id]
+  description = "Deprecated compatibility alias. These subnet resources are now public subnets."
+  value       = [aws_subnet.private_a.id, aws_subnet.private_b.id]
 }
 
 output "alb_dns_name" {
