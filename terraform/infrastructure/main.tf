@@ -25,8 +25,6 @@ locals {
   environment           = "sandbox"
   app_name              = "healthcare"
   vpc_cidr              = "10.20.0.0/16"
-  public_subnet_a_cidr  = "10.20.1.0/24"
-  public_subnet_b_cidr  = "10.20.2.0/24"
   private_subnet_a_cidr = "10.20.101.0/24"
   private_subnet_b_cidr = "10.20.102.0/24"
 
@@ -43,6 +41,16 @@ locals {
   cloudfront_origin_id = "private-alb-origin"
   cognito_callback_url = "https://${aws_cloudfront_distribution.app.domain_name}/auth/callback"
   cognito_logout_url   = "https://${aws_cloudfront_distribution.app.domain_name}/"
+
+  interface_vpc_endpoint_services = toset([
+    "ecr.api",
+    "ecr.dkr",
+    "secretsmanager",
+    "logs",
+    "ssm",
+    "ssmmessages",
+    "ec2messages"
+  ])
 
   common_tags = {
     Environment = local.environment
@@ -101,33 +109,13 @@ resource "aws_vpc" "main" {
   })
 }
 
+# CloudFront VPC Origin requires an Internet Gateway attached to the VPC.
+# It is not used as a route for the private ALB traffic.
 resource "aws_internet_gateway" "main" {
   vpc_id = aws_vpc.main.id
 
   tags = merge(local.common_tags, {
-    Name = "internet gateway"
-  })
-}
-
-resource "aws_subnet" "public_a" {
-  vpc_id                  = aws_vpc.main.id
-  availability_zone       = data.aws_availability_zones.available.names[0]
-  cidr_block              = local.public_subnet_a_cidr
-  map_public_ip_on_launch = true
-
-  tags = merge(local.common_tags, {
-    Name = "PublicSubnet-${data.aws_availability_zones.available.names[0]}"
-  })
-}
-
-resource "aws_subnet" "public_b" {
-  vpc_id                  = aws_vpc.main.id
-  availability_zone       = data.aws_availability_zones.available.names[1]
-  cidr_block              = local.public_subnet_b_cidr
-  map_public_ip_on_launch = true
-
-  tags = merge(local.common_tags, {
-    Name = "PublicSubnet-${data.aws_availability_zones.available.names[1]}"
+    Name = "CloudFrontVpcOriginRequirementIGW"
   })
 }
 
@@ -151,30 +139,6 @@ resource "aws_subnet" "private_b" {
   tags = merge(local.common_tags, {
     Name = "PrivateSubnet-${data.aws_availability_zones.available.names[1]}"
   })
-}
-
-resource "aws_route_table" "public" {
-  vpc_id = aws_vpc.main.id
-
-  tags = merge(local.common_tags, {
-    Name = "PublicRouteTable"
-  })
-}
-
-resource "aws_route" "public_internet" {
-  route_table_id         = aws_route_table.public.id
-  destination_cidr_block = "0.0.0.0/0"
-  gateway_id             = aws_internet_gateway.main.id
-}
-
-resource "aws_route_table_association" "public_a" {
-  subnet_id      = aws_subnet.public_a.id
-  route_table_id = aws_route_table.public.id
-}
-
-resource "aws_route_table_association" "public_b" {
-  subnet_id      = aws_subnet.public_b.id
-  route_table_id = aws_route_table.public.id
 }
 
 resource "aws_route_table" "private" {
@@ -220,6 +184,31 @@ resource "aws_security_group" "alb" {
   })
 }
 
+resource "aws_security_group" "vpc_endpoints" {
+  name        = "healthcare-vpc-endpoints-sg"
+  description = "Allow private subnets to reach AWS service VPC endpoints"
+  vpc_id      = aws_vpc.main.id
+
+  ingress {
+    description = "HTTPS from inside VPC"
+    protocol    = "tcp"
+    from_port   = 443
+    to_port     = 443
+    cidr_blocks = [local.vpc_cidr]
+  }
+
+  egress {
+    protocol    = "-1"
+    from_port   = 0
+    to_port     = 0
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = merge(local.common_tags, {
+    Name = "VpcEndpointsSG"
+  })
+}
+
 resource "aws_security_group" "ec2" {
   name        = "healthcare-ec2-ssm-sg"
   description = "EC2 SG for SSM access; no SSH required"
@@ -259,6 +248,32 @@ resource "aws_security_group" "rds" {
 
   tags = merge(local.common_tags, {
     Name = "RdsSG"
+  })
+}
+
+resource "aws_vpc_endpoint" "interface" {
+  for_each = local.interface_vpc_endpoint_services
+
+  vpc_id              = aws_vpc.main.id
+  service_name        = "com.amazonaws.${data.aws_region.current.name}.${each.value}"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = [aws_subnet.private_a.id, aws_subnet.private_b.id]
+  security_group_ids  = [aws_security_group.vpc_endpoints.id]
+  private_dns_enabled = true
+
+  tags = merge(local.common_tags, {
+    Name = "${each.value}-endpoint"
+  })
+}
+
+resource "aws_vpc_endpoint" "s3" {
+  vpc_id            = aws_vpc.main.id
+  service_name      = "com.amazonaws.${data.aws_region.current.name}.s3"
+  vpc_endpoint_type = "Gateway"
+  route_table_ids   = [aws_route_table.private.id]
+
+  tags = merge(local.common_tags, {
+    Name = "s3-gateway-endpoint"
   })
 }
 
@@ -368,6 +383,7 @@ resource "aws_cloudfront_vpc_origin" "app" {
   }
 
   depends_on = [
+    aws_internet_gateway.main,
     aws_lb.main
   ]
 
@@ -535,10 +551,6 @@ output "vpc_id" {
   value = aws_vpc.main.id
 }
 
-output "public_subnet_ids" {
-  value = [aws_subnet.public_a.id, aws_subnet.public_b.id]
-}
-
 output "private_subnet_ids" {
   value = [aws_subnet.private_a.id, aws_subnet.private_b.id]
 }
@@ -608,6 +620,14 @@ output "ecr_repository_url" {
   value = aws_ecr_repository.app.repository_url
 }
 
+output "vpc_interface_endpoint_ids" {
+  value = { for service, endpoint in aws_vpc_endpoint.interface : service => endpoint.id }
+}
+
+output "s3_gateway_endpoint_id" {
+  value = aws_vpc_endpoint.s3.id
+}
+
 output "rds_endpoint" {
   value = aws_db_instance.health.address
 }
@@ -633,7 +653,7 @@ output "aws_region" {
 }
 
 output "temporary_ec2_subnet_id" {
-  value = aws_subnet.public_a.id
+  value = aws_subnet.private_a.id
 }
 
 output "temporary_ec2_security_group_id" {
