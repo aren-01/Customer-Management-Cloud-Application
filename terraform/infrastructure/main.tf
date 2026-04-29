@@ -31,7 +31,7 @@ locals {
   ecr_repository_name = "customermanagementapp"
 
   container_port    = 3000
-  health_check_path = "/"
+  health_check_path = "/health"
 
   db_engine   = "mysql"
   db_name     = "healthcaredb"
