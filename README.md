@@ -27,9 +27,7 @@ Transit Gateway.
 
 In this project, I focused on the system shown above. This is a
 simplified version of the first architecture, and it includes an
-Internet Gateway (IGW). In practice, it is not safe to deploy a JS
-admin panel without a login page; however, this simplified deployment is
-only for training purposes using the AWS Free Tier. There is one
+Internet Gateway (IGW). In practice, I used Cognito user authorization and CloudFront instead of Site-to-Site VPN to deploy the JS app. There is one
 temporary EC2 instance, used only to import the SQL file into RDS.
 
 I also deployed a GitHub [destroy.yml](.github/workflows/destroy.yml) file to totally destroy the system with terraform state S3 Bucket. The deploy workflow creates an S3 bucket to store the Terraform state.
