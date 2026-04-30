@@ -22,7 +22,7 @@ Transit Gateway.
 
 ## Actual Deployment for This Version
 
-![](./images/image2.jpg)
+![](./images/image-2.jpg)
 
 
 In this project, I focused on the system shown above. This is a
