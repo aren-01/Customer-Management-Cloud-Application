@@ -48,7 +48,7 @@ Please see the [cloudformation.yml](optional/cloudformation.yml) file if you pre
 You need to configure the GitHub permissions using the least privilege principle when setting up your integration on AWS.
 Always follow the principle of least privilege to authorize GitHub.
 
-## How to Deploy It?
+## How to Deploy?
 
 This system can work on AWS Free Tier accounts. 
 
