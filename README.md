@@ -10,7 +10,7 @@ Database. A sample database named
 \"[db_health.sql](https://github.com/aren-01/Customer-Management-Cloud-Application/blob/main/db/db_health.sql)"
 is in the database folder. A JS admin panel application, deployed and
 containerized with Docker on the local machine, retrieves data from the
-database and edits it. As per the requirements of this scenario, for
+database and updates it. As per the requirements of this scenario, for
 availability and low latency, there are two regions, and these regions
 are connected to the on-premises servers by a Site-to-Site VPN. In this
 way, the company can track its customer information in the AWS Cloud.
@@ -32,7 +32,7 @@ admin panel without a login page; however, this simplified deployment is
 only for training purposes using the AWS Free Tier. There is one
 temporary EC2 instance, used only to import the SQL file into RDS.
 
-I also deployed a GitHub [destroy.yml](.github/workflows/destroy.yml) file to destroy the system. The deploy workflow creates an S3 bucket to store the Terraform state.
+I also deployed a GitHub [destroy.yml](.github/workflows/destroy.yml) file to totally destroy the system with terraform state S3 Bucket. The deploy workflow creates an S3 bucket to store the Terraform state.
 
 [deploy.yml](.github/workflows/deploy.yml):
 
@@ -47,6 +47,26 @@ Please see the [cloudformation.yml](optional/cloudformation.yml) file if you pre
 
 You need to configure the GitHub permissions using the least privilege principle when setting up your integration on AWS.
 Always follow the principle of least privilege to authorize GitHub.
+
+## How to Deploy It?
+
+This system can work on AWS Free Tier accounts. 
+
+1. Fork the repo
+2. Authorize a GitHub role on AWS following the least privilege princible for the services used in this system.
+3. Create repository secrets as follows, use the strings provided by AWS for AWS_ROLE_TO_ASSUME:
+
+`AWS_ROLE_TO_ASSUME`
+
+`CLOUDFRONT_SECRET`
+
+`DB_PASSWORD`
+
+`SESSION_SECRET`
+
+4. Start the deployment in the actions tab.
+5. After deployment, manually create a Congito user to log into the system through CloudFront.
+6. In case you prefer to remove the entire system, in the actions tab, use `Destroy the all deployment`
 
 
 
