@@ -53,7 +53,7 @@ Always follow the principle of least privilege to authorize GitHub.
 This system can work on AWS Free Tier accounts. 
 
 1. Fork the repo
-2. Authorize a GitHub role on AWS following the least privilege princible for the services used in this system.
+2. Authorize a GitHub role on AWS following the least privilege princible for the services used in this system. This system is using OpenID Connect for authorization.
 3. Create repository secrets as follows, use the strings provided by AWS for AWS_ROLE_TO_ASSUME:
 
 `AWS_ROLE_TO_ASSUME`
