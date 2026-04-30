@@ -1,9 +1,59 @@
+const crypto = require("crypto");
 const expressLayouts = require("express-ejs-layouts");
 const express = require("express");
 const mysql = require("mysql2/promise");
 const path = require("path");
+const session = require("express-session");
+const { createRemoteJWKSet, jwtVerify } = require("jose");
 
 const app = express();
+
+const requiredEnvVars = [
+  "APP_BASE_URL",
+  "COGNITO_DOMAIN",
+  "COGNITO_USER_POOL_ID",
+  "COGNITO_CLIENT_ID",
+  "COGNITO_CLIENT_SECRET",
+  "SESSION_SECRET",
+  "CLOUDFRONT_SECRET", // Added this here
+  "DB_HOST",
+  "DB_USER",
+  "DB_PASS",
+  "DB_NAME",
+];
+
+const missingEnvVars = requiredEnvVars.filter((name) => !process.env[name]);
+if (missingEnvVars.length > 0) {
+  throw new Error(`Missing required environment variables: ${missingEnvVars.join(", ")}`);
+}
+
+const APP_BASE_URL = process.env.APP_BASE_URL.replace(/\/$/, "");
+const AWS_REGION = process.env.AWS_REGION || "us-east-1";
+const COGNITO_DOMAIN = process.env.COGNITO_DOMAIN.replace(/\/$/, "");
+const COGNITO_USER_POOL_ID = process.env.COGNITO_USER_POOL_ID;
+const COGNITO_CLIENT_ID = process.env.COGNITO_CLIENT_ID;
+const COGNITO_CLIENT_SECRET = process.env.COGNITO_CLIENT_SECRET;
+const COGNITO_CALLBACK_URL = process.env.COGNITO_CALLBACK_URL || `${APP_BASE_URL}/auth/callback`;
+const COGNITO_LOGOUT_URL = process.env.COGNITO_LOGOUT_URL || `${APP_BASE_URL}/`;
+const COGNITO_ISSUER = `https://cognito-idp.${AWS_REGION}.amazonaws.com/${COGNITO_USER_POOL_ID}`;
+const COGNITO_SCOPES = "openid email profile";
+const COGNITO_JWKS = createRemoteJWKSet(new URL(`${COGNITO_ISSUER}/.well-known/jwks.json`));
+const CLOUDFRONT_SECRET = process.env.CLOUDFRONT_SECRET; // Grab secret from ENV
+
+// Trust CloudFront/ALB proxy headers.
+
+app.set("trust proxy", true);
+
+
+app.use((req, res, next) => {
+  req.headers["x-forwarded-proto"] = "https";
+  next();
+});
+
+// Health route for the ALB target group. Do not protect this with Cognito or host verification.
+app.get("/health", (req, res) => {
+  res.status(200).send("OK");
+});
 
 // Database information
 const db = mysql.createPool({
@@ -25,16 +75,176 @@ app.set("layout", "layout");
 
 app.use(express.urlencoded({ extended: true }));
 
+app.use(
+  session({
+    name: process.env.SESSION_COOKIE_NAME || "customerapp.sid",
+    secret: process.env.SESSION_SECRET,
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: process.env.SESSION_COOKIE_SECURE === "true",
+      maxAge: 60 * 60 * 1000,
+    },
+  })
+);
+
 app.use((req, res, next) => {
   res.locals.page = "";
   res.locals.message = "";
   res.locals.error = "";
   res.locals.success = "";
+  res.locals.user = req.session.user || null;
   next();
 });
 
+// Replaced Host verification with Secret verification
+function requireCloudFrontSecret(req, res, next) {
+  const incomingSecret = req.headers["x-cloudfront-secret"];
+
+  if (incomingSecret === CLOUDFRONT_SECRET) {
+    return next();
+  }
+
+  console.warn(`Blocked request with invalid secret. path=${req.originalUrl}`);
+  return res.status(403).send("Forbidden. Please use the CloudFront application URL.");
+}
+
+function safeReturnTo(returnTo) {
+  if (!returnTo || typeof returnTo !== "string") {
+    return "/";
+  }
+
+  if (!returnTo.startsWith("/") || returnTo.startsWith("//")) {
+    return "/";
+  }
+
+  return returnTo;
+}
+
+function buildCognitoLoginUrl(state) {
+  const params = new URLSearchParams({
+    client_id: COGNITO_CLIENT_ID,
+    response_type: "code",
+    scope: COGNITO_SCOPES,
+    redirect_uri: COGNITO_CALLBACK_URL,
+    state,
+  });
+
+  return `${COGNITO_DOMAIN}/login?${params.toString()}`;
+}
+
+function buildCognitoLogoutUrl() {
+  const params = new URLSearchParams({
+    client_id: COGNITO_CLIENT_ID,
+    logout_uri: COGNITO_LOGOUT_URL,
+  });
+
+  return `${COGNITO_DOMAIN}/logout?${params.toString()}`;
+}
+
+async function exchangeCodeForTokens(code) {
+  const body = new URLSearchParams({
+    grant_type: "authorization_code",
+    client_id: COGNITO_CLIENT_ID,
+    code,
+    redirect_uri: COGNITO_CALLBACK_URL,
+  });
+
+  const basicAuth = Buffer.from(`${COGNITO_CLIENT_ID}:${COGNITO_CLIENT_SECRET}`).toString("base64");
+
+  const response = await fetch(`${COGNITO_DOMAIN}/oauth2/token`, {
+    method: "POST",
+    headers: {
+      Authorization: `Basic ${basicAuth}`,
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body,
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Cognito token exchange failed: ${response.status} ${errorText}`);
+  }
+
+  return response.json();
+}
+
+async function verifyIdToken(idToken) {
+  const { payload } = await jwtVerify(idToken, COGNITO_JWKS, {
+    issuer: COGNITO_ISSUER,
+    audience: COGNITO_CLIENT_ID,
+  });
+
+  return payload;
+}
+
+function requireAuth(req, res, next) {
+  if (req.session.user) {
+    return next();
+  }
+
+  return res.redirect(`/login?returnTo=${encodeURIComponent(req.originalUrl)}`);
+}
+
+// Only allow normal app traffic when the request has the CloudFront secret header
+app.use(requireCloudFrontSecret);
+
 // This lets Express use files from the public folder.
 app.use(express.static(path.join(__dirname, "public")));
+
+app.get("/login", (req, res) => {
+  const state = crypto.randomBytes(32).toString("hex");
+
+  req.session.oauthState = state;
+  req.session.returnTo = safeReturnTo(req.query.returnTo || "/");
+
+  res.redirect(buildCognitoLoginUrl(state));
+});
+
+app.get("/auth/callback", async (req, res) => {
+  try {
+    const { code, state, error, error_description } = req.query;
+
+    if (error) {
+      return res.status(401).send(`Cognito login failed: ${error_description || error}`);
+    }
+
+    if (!code || !state || state !== req.session.oauthState) {
+      return res.status(400).send("Invalid Cognito callback state.");
+    }
+
+    const tokens = await exchangeCodeForTokens(code);
+    const idTokenPayload = await verifyIdToken(tokens.id_token);
+
+    req.session.user = {
+      sub: idTokenPayload.sub,
+      email: idTokenPayload.email,
+      name: idTokenPayload.name || idTokenPayload.email,
+    };
+
+    delete req.session.oauthState;
+
+    const returnTo = safeReturnTo(req.session.returnTo || "/");
+    delete req.session.returnTo;
+
+    res.redirect(returnTo);
+  } catch (err) {
+    console.error(err);
+    res.status(500).send("Authentication error: " + err.message);
+  }
+});
+
+app.get("/logout", (req, res) => {
+  req.session.destroy(() => {
+    res.clearCookie(process.env.SESSION_COOKIE_NAME || "customerapp.sid");
+    res.redirect(buildCognitoLogoutUrl());
+  });
+});
+
+// Everything below this line requires a successful Cognito sign-in.
+app.use(requireAuth);
 
 // Route files
 const customerRoutes = require("./routes/customers");
@@ -461,5 +671,6 @@ app.post("/insurance/verify", async (req, res) => {
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
-  console.log(`Server running at http://localhost:${PORT}`);
+  console.log(`Server running on port ${PORT}`);
+  console.log(`Expected public URL: ${APP_BASE_URL}`);
 });
