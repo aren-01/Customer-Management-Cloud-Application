@@ -66,12 +66,14 @@ This system can work on AWS Free Tier accounts.
 5. After deployment, manually create a Congito user to log into the system through CloudFront.
 6. In case you prefer to remove the entire system, in the actions tab, use `Destroy the all deployment`
 
+## Status Badge
+[![Deploy Customer Management App](https://github.com/aren-01/Customer-Management-Cloud-Application/actions/workflows/deploy.yml/badge.svg)](https://github.com/aren-01/Customer-Management-Cloud-Application/actions/workflows/deploy.yml)
+
 ## Screenshots
 
 ![](./images/image5.png)
 ![](./images/image6.png)
 ![](./images/image7.png)
 ![](./images/image8.png)
-
 
 
