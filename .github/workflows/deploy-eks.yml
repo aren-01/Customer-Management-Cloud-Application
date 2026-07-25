@@ -1,4 +1,4 @@
-name: Deploy Customer Management App
+name: Deploy Customer Management App with Kubernetes
 
 on:
   workflow_dispatch:
