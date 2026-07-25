@@ -14,7 +14,7 @@ env:
   TF_STATE_BUCKET: cma02-tfstate-${{ github.repository_owner }}
 
 jobs:
-  # 1. DEPLOY BASE INFRASTRUCTURE AND GET OUTPUTS (FROM ROOT)
+  # 1. DEPLOY INFRASTRUCTURE & EKS FROM MERGED FOLDER
   deploy-infrastructure:
     runs-on: ubuntu-latest
     outputs:
@@ -79,27 +79,30 @@ jobs:
               }'
           fi
 
-      - name: Terraform init infrastructure
+      - name: Terraform init (eks-service)
+        working-directory: terraform/eks-service
         run: |
           set -euo pipefail
 
           terraform init \
             -backend-config="bucket=${{ steps.tfstate.outputs.bucket_name }}" \
-            -backend-config="key=customermanagementapp/infrastructure/terraform.tfstate" \
+            -backend-config="key=customermanagementapp/eks-service/terraform.tfstate" \
             -backend-config="region=${{ env.AWS_REGION }}" \
             -backend-config="use_lockfile=true"
 
-      - name: Terraform apply infrastructure
+      - name: Terraform apply (eks-service)
+        working-directory: terraform/eks-service
         env:
           TF_VAR_cloudfront_secret: ${{ secrets.CLOUDFRONT_SECRET }}
         run: |
           set -euo pipefail
           
-          # This builds your VPC, ECR, and EKS Cluster from the root directory before anything else happens!
+          # This provisions your VPC, ECR, and EKS Cluster from the merged folder!
           terraform apply -auto-approve
 
       - name: Read infrastructure outputs needed for image build and EKS
         id: infra_outputs
+        working-directory: terraform/eks-service
         run: |
           set -euo pipefail
 
@@ -182,30 +185,6 @@ jobs:
         with:
           aws-region: ${{ env.AWS_REGION }}
           role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_wrapper: false
-
-      - name: Terraform apply EKS service
-        working-directory: terraform/eks-service
-        env:
-          TF_STATE_BUCKET: ${{ needs.deploy-infrastructure.outputs.tf_state_bucket }}
-          ECR_REPOSITORY_URL: ${{ needs.deploy-infrastructure.outputs.ecr_repository_url }}
-          IMAGE_TAG: ${{ needs.build-and-push.outputs.image_tag }}
-        run: |
-          set -euo pipefail
-
-          terraform init \
-            -backend-config="bucket=${TF_STATE_BUCKET}" \
-            -backend-config="key=customermanagementapp/eks-service/terraform.tfstate" \
-            -backend-config="region=${AWS_REGION}" \
-            -backend-config="use_lockfile=true"
-
-          terraform apply -auto-approve \
-            -var="ecr_repository_url=${ECR_REPOSITORY_URL}" \
-            -var="image_tag=${IMAGE_TAG}"
 
       - name: Deploy application to EKS cluster
         env:
