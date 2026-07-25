@@ -26,7 +26,9 @@ locals {
 
   ecr_repository_name = "customermanagementapp"
 
-  # Placeholders since CloudFront is removed
+  custom_origin_domain = "example.com"
+  cloudfront_origin_id = "custom-http-origin"
+
   cognito_callback_url = "https://example.com/auth/callback"
   cognito_logout_url   = "https://example.com/"
 
@@ -38,6 +40,23 @@ locals {
     "ssmmessages",
     "ec2messages"
   ])
+
+  eks_cluster_policies = [
+    "arn:aws:iam::aws:policy/AmazonEKSBlockStoragePolicyV2",
+    "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy",
+    "arn:aws:iam::aws:policy/AmazonEKSComputePolicy",
+    "arn:aws:iam::aws:policy/AmazonEKSLoadBalancingPolicy",
+    "arn:aws:iam::aws:policy/AmazonEKSNetworkingPolicy"
+  ]
+
+  eks_node_policies = [
+    "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryPullOnly",
+    "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly",
+    "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy",
+    "arn:aws:iam::aws:policy/AmazonEKSWorkerNodeMinimalPolicy",
+    "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy",
+    "arn:aws:iam::aws:policy/AmazonElasticContainerRegistryPublicReadOnly"
+  ]
 
   common_tags = {
     Environment = local.environment
@@ -54,6 +73,14 @@ data "aws_region" "current" {}
 
 data "aws_ssm_parameter" "al2023_ami" {
   name = "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64"
+}
+
+data "aws_cloudfront_cache_policy" "caching_disabled" {
+  name = "Managed-CachingDisabled"
+}
+
+data "aws_cloudfront_origin_request_policy" "all_viewer" {
+  name = "Managed-AllViewer"
 }
 
 resource "aws_ecr_repository" "app" {
@@ -114,8 +141,6 @@ resource "aws_subnet" "public_b" {
   })
 }
 
-# Dedicated private subnets for private management resources.
-# These subnets do not receive public IPs and do not have a default route to the Internet Gateway.
 resource "aws_subnet" "private_a" {
   vpc_id                  = aws_vpc.main.id
   availability_zone       = data.aws_availability_zones.available.names[0]
@@ -315,6 +340,48 @@ resource "aws_cognito_user_pool_domain" "main" {
   user_pool_id = aws_cognito_user_pool.app.id
 }
 
+resource "aws_cloudfront_distribution" "app" {
+  enabled         = true
+  is_ipv6_enabled = true
+  comment         = "CloudFront distribution with custom HTTP origin for ${local.app_name} ${local.environment}"
+  price_class     = "PriceClass_100"
+
+  origin {
+    domain_name = local.custom_origin_domain
+    origin_id   = local.cloudfront_origin_id
+
+    custom_origin_config {
+      http_port              = 80
+      https_port             = 443
+      origin_protocol_policy = "http-only"
+      origin_ssl_protocols   = ["TLSv1.2"]
+    }
+  }
+
+  default_cache_behavior {
+    target_origin_id       = local.cloudfront_origin_id
+    viewer_protocol_policy = "redirect-to-https"
+
+    allowed_methods = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]
+    cached_methods  = ["GET", "HEAD"]
+
+    cache_policy_id          = data.aws_cloudfront_cache_policy.caching_disabled.id
+    origin_request_policy_id = data.aws_cloudfront_origin_request_policy.all_viewer.id
+  }
+
+  restrictions {
+    geo_restriction {
+      restriction_type = "none"
+    }
+  }
+
+  viewer_certificate {
+    cloudfront_default_certificate = true
+  }
+
+  tags = local.common_tags
+}
+
 resource "aws_iam_role" "ec2_role" {
   name = "ec2-ssm-role"
 
@@ -342,18 +409,131 @@ resource "aws_iam_instance_profile" "ec2_profile" {
   role = aws_iam_role.ec2_role.name
 }
 
+resource "aws_iam_role" "eks_cluster_role" {
+  name = "customer-app-eks-cluster-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Principal = {
+        Service = "eks.amazonaws.com"
+      }
+      Action = "sts:AssumeRole"
+    }]
+  })
+
+  tags = merge(local.common_tags, {
+    Name = "customer-app-eks-cluster-role"
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "eks_cluster_role_policies" {
+  for_each   = toset(local.eks_cluster_policies)
+  role       = aws_iam_role.eks_cluster_role.name
+  policy_arn = each.value
+}
+
+resource "aws_iam_role" "eks_node_role" {
+  name = "customer-app-eks-node-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Principal = {
+        Service = "ec2.amazonaws.com"
+      }
+      Action = "sts:AssumeRole"
+    }]
+  })
+
+  tags = merge(local.common_tags, {
+    Name = "customer-app-eks-node-role"
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "eks_node_role_policies" {
+  for_each   = toset(local.eks_node_policies)
+  role       = aws_iam_role.eks_node_role.name
+  policy_arn = each.value
+}
+
+resource "aws_eks_cluster" "app" {
+  name     = "customer-management-app"
+  role_arn = aws_iam_role.eks_cluster_role.arn
+
+  vpc_config {
+    subnet_ids = [
+      aws_subnet.private_a.id,
+      aws_subnet.private_b.id,
+      aws_subnet.public_a.id,
+      aws_subnet.public_b.id
+    ]
+  }
+
+  depends_on = [
+    aws_iam_role_policy_attachment.eks_cluster_role_policies
+  ]
+
+  tags = local.common_tags
+}
+
+resource "aws_eks_node_group" "app" {
+  cluster_name    = aws_eks_cluster.app.name
+  node_group_name = "customer-management-nodes"
+  node_role_arn   = aws_iam_role.eks_node_role.arn
+  subnet_ids      = [aws_subnet.private_a.id, aws_subnet.private_b.id]
+
+  scaling_config {
+    desired_size = 2
+    max_size     = 3
+    min_size     = 1
+  }
+
+  depends_on = [
+    aws_iam_role_policy_attachment.eks_node_role_policies
+  ]
+
+  tags = local.common_tags
+}
+
+resource "aws_eks_addon" "vpc_cni" {
+  cluster_name = aws_eks_cluster.app.name
+  addon_name   = "vpc-cni"
+
+  depends_on = [
+    aws_eks_node_group.app
+  ]
+}
+
+resource "aws_eks_addon" "kube_proxy" {
+  cluster_name = aws_eks_cluster.app.name
+  addon_name   = "kube-proxy"
+
+  depends_on = [
+    aws_eks_node_group.app
+  ]
+}
+
 output "vpc_id" {
   value = aws_vpc.main.id
 }
 
 output "public_subnet_ids" {
-  description = "Public subnet IDs"
-  value       = [aws_subnet.public_a.id, aws_subnet.public_b.id]
+  value = [aws_subnet.public_a.id, aws_subnet.public_b.id]
 }
 
 output "private_subnet_ids" {
-  description = "Private subnet IDs"
-  value       = [aws_subnet.private_a.id, aws_subnet.private_b.id]
+  value = [aws_subnet.private_a.id, aws_subnet.private_b.id]
+}
+
+output "cloudfront_domain_name" {
+  value = aws_cloudfront_distribution.app.domain_name
+}
+
+output "cloudfront_url" {
+  value = "https://${aws_cloudfront_distribution.app.domain_name}"
 }
 
 output "cognito_user_pool_id" {
@@ -419,4 +599,20 @@ output "temporary_ec2_ami_id" {
 
 output "internet_gateway_id" {
   value = aws_internet_gateway.main.id
+}
+
+output "eks_cluster_name" {
+  value = aws_eks_cluster.app.name
+}
+
+output "eks_cluster_endpoint" {
+  value = aws_eks_cluster.app.endpoint
+}
+
+output "eks_cluster_role_arn" {
+  value = aws_iam_role.eks_cluster_role.arn
+}
+
+output "eks_node_role_arn" {
+  value = aws_iam_role.eks_node_role.arn
 }
