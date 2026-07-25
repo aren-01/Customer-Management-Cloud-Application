@@ -92,6 +92,8 @@ jobs:
 
       - name: Terraform apply infrastructure
         working-directory: terraform/infrastructure
+        env:
+          TF_VAR_cloudfront_secret: ${{ secrets.CLOUDFRONT_SECRET }}
         run: |
           set -euo pipefail
           
