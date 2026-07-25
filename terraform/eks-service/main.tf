@@ -18,6 +18,7 @@ provider "aws" {
 locals {
   environment           = "sandbox"
   app_name              = "healthcare"
+  cluster_name          = "customer-management-app"
   vpc_cidr              = "10.20.0.0/16"
   public_subnet_a_cidr  = "10.20.101.0/24"
   public_subnet_b_cidr  = "10.20.102.0/24"
@@ -126,7 +127,9 @@ resource "aws_subnet" "public_a" {
   map_public_ip_on_launch = true
 
   tags = merge(local.common_tags, {
-    Name = "PublicSubnet-${data.aws_availability_zones.available.names[0]}"
+    Name                                        = "PublicSubnet-${data.aws_availability_zones.available.names[0]}"
+    "kubernetes.io/cluster/${local.cluster_name}" = "shared"
+    "kubernetes.io/role/elb"                      = "1"
   })
 }
 
@@ -137,7 +140,9 @@ resource "aws_subnet" "public_b" {
   map_public_ip_on_launch = true
 
   tags = merge(local.common_tags, {
-    Name = "PublicSubnet-${data.aws_availability_zones.available.names[1]}"
+    Name                                        = "PublicSubnet-${data.aws_availability_zones.available.names[1]}"
+    "kubernetes.io/cluster/${local.cluster_name}" = "shared"
+    "kubernetes.io/role/elb"                      = "1"
   })
 }
 
@@ -148,7 +153,9 @@ resource "aws_subnet" "private_a" {
   map_public_ip_on_launch = false
 
   tags = merge(local.common_tags, {
-    Name = "PrivateSubnet-${data.aws_availability_zones.available.names[0]}"
+    Name                                        = "PrivateSubnet-${data.aws_availability_zones.available.names[0]}"
+    "kubernetes.io/cluster/${local.cluster_name}" = "shared"
+    "kubernetes.io/role/internal-elb"             = "1"
   })
 }
 
@@ -159,7 +166,9 @@ resource "aws_subnet" "private_b" {
   map_public_ip_on_launch = false
 
   tags = merge(local.common_tags, {
-    Name = "PrivateSubnet-${data.aws_availability_zones.available.names[1]}"
+    Name                                        = "PrivateSubnet-${data.aws_availability_zones.available.names[1]}"
+    "kubernetes.io/cluster/${local.cluster_name}" = "shared"
+    "kubernetes.io/role/internal-elb"             = "1"
   })
 }
 
@@ -460,7 +469,7 @@ resource "aws_iam_role_policy_attachment" "eks_node_role_policies" {
 }
 
 resource "aws_eks_cluster" "app" {
-  name     = "customer-management-app"
+  name     = local.cluster_name
   role_arn = aws_iam_role.eks_cluster_role.arn
 
   vpc_config {
@@ -472,6 +481,11 @@ resource "aws_eks_cluster" "app" {
     ]
   }
 
+  access_config {
+    authentication_mode                         = "API_AND_CONFIG_MAP"
+    bootstrap_cluster_creator_admin_permissions = true
+  }
+
   depends_on = [
     aws_iam_role_policy_attachment.eks_cluster_role_policies
   ]
@@ -479,41 +493,43 @@ resource "aws_eks_cluster" "app" {
   tags = local.common_tags
 }
 
-resource "aws_eks_node_group" "app" {
-  cluster_name    = aws_eks_cluster.app.name
-  node_group_name = "customer-management-nodes"
-  node_role_arn   = aws_iam_role.eks_node_role.arn
-  subnet_ids      = [aws_subnet.private_a.id, aws_subnet.private_b.id]
-
-  scaling_config {
-    desired_size = 2
-    max_size     = 3
-    min_size     = 1
-  }
-
-  depends_on = [
-    aws_iam_role_policy_attachment.eks_node_role_policies
-  ]
-
-  tags = local.common_tags
+resource "aws_eks_access_entry" "node_linux" {
+  cluster_name  = aws_eks_cluster.app.name
+  principal_arn = aws_iam_role.eks_node_role.arn
+  type          = "EC2_LINUX"
 }
 
 resource "aws_eks_addon" "vpc_cni" {
   cluster_name = aws_eks_cluster.app.name
   addon_name   = "vpc-cni"
-
-  depends_on = [
-    aws_eks_node_group.app
-  ]
 }
 
 resource "aws_eks_addon" "kube_proxy" {
   cluster_name = aws_eks_cluster.app.name
   addon_name   = "kube-proxy"
+}
+
+resource "aws_eks_node_group" "app" {
+  cluster_name    = aws_eks_cluster.app.name
+  node_group_name = "db-and-app"
+  node_role_arn   = aws_iam_role.eks_node_role.arn
+  subnet_ids      = [aws_subnet.private_a.id, aws_subnet.private_b.id]
+  instance_types  = ["t3.small"]
+
+  scaling_config {
+    desired_size = 4
+    max_size     = 6
+    min_size     = 2
+  }
 
   depends_on = [
-    aws_eks_node_group.app
+    aws_iam_role_policy_attachment.eks_node_role_policies,
+    aws_eks_access_entry.node_linux,
+    aws_eks_addon.vpc_cni,
+    aws_eks_addon.kube_proxy
   ]
+
+  tags = local.common_tags
 }
 
 output "vpc_id" {
