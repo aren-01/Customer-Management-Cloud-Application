@@ -14,7 +14,7 @@ env:
   TF_STATE_BUCKET: cma02-tfstate-${{ github.repository_owner }}
 
 jobs:
-  # 1. DEPLOY BASE INFRASTRUCTURE AND GET OUTPUTS
+  # 1. DEPLOY BASE INFRASTRUCTURE AND GET OUTPUTS (FROM ROOT)
   deploy-infrastructure:
     runs-on: ubuntu-latest
     outputs:
@@ -80,7 +80,6 @@ jobs:
           fi
 
       - name: Terraform init infrastructure
-        working-directory: terraform/infrastructure
         run: |
           set -euo pipefail
 
@@ -91,18 +90,16 @@ jobs:
             -backend-config="use_lockfile=true"
 
       - name: Terraform apply infrastructure
-        working-directory: terraform/infrastructure
         env:
           TF_VAR_cloudfront_secret: ${{ secrets.CLOUDFRONT_SECRET }}
         run: |
           set -euo pipefail
           
-          # This builds your VPC, ECR, and EKS Cluster before anything else happens!
+          # This builds your VPC, ECR, and EKS Cluster from the root directory before anything else happens!
           terraform apply -auto-approve
 
       - name: Read infrastructure outputs needed for image build and EKS
         id: infra_outputs
-        working-directory: terraform/infrastructure
         run: |
           set -euo pipefail
 
