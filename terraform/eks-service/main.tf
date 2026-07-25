@@ -15,6 +15,12 @@ provider "aws" {
   region = "us-east-1"
 }
 
+variable "cloudfront_secret" {
+  type        = string
+  description = "Custom secret header value supplied by GitHub Actions"
+  sensitive   = true
+}
+
 locals {
   environment           = "sandbox"
   app_name              = "healthcare"
@@ -127,9 +133,9 @@ resource "aws_subnet" "public_a" {
   map_public_ip_on_launch = true
 
   tags = merge(local.common_tags, {
-    Name                                        = "PublicSubnet-${data.aws_availability_zones.available.names[0]}"
+    Name                                           = "PublicSubnet-${data.aws_availability_zones.available.names[0]}"
     "kubernetes.io/cluster/${local.cluster_name}" = "shared"
-    "kubernetes.io/role/elb"                      = "1"
+    "kubernetes.io/role/elb"                       = "1"
   })
 }
 
@@ -140,9 +146,9 @@ resource "aws_subnet" "public_b" {
   map_public_ip_on_launch = true
 
   tags = merge(local.common_tags, {
-    Name                                        = "PublicSubnet-${data.aws_availability_zones.available.names[1]}"
+    Name                                           = "PublicSubnet-${data.aws_availability_zones.available.names[1]}"
     "kubernetes.io/cluster/${local.cluster_name}" = "shared"
-    "kubernetes.io/role/elb"                      = "1"
+    "kubernetes.io/role/elb"                       = "1"
   })
 }
 
@@ -153,9 +159,9 @@ resource "aws_subnet" "private_a" {
   map_public_ip_on_launch = false
 
   tags = merge(local.common_tags, {
-    Name                                        = "PrivateSubnet-${data.aws_availability_zones.available.names[0]}"
+    Name                                           = "PrivateSubnet-${data.aws_availability_zones.available.names[0]}"
     "kubernetes.io/cluster/${local.cluster_name}" = "shared"
-    "kubernetes.io/role/internal-elb"             = "1"
+    "kubernetes.io/role/internal-elb"              = "1"
   })
 }
 
@@ -166,9 +172,9 @@ resource "aws_subnet" "private_b" {
   map_public_ip_on_launch = false
 
   tags = merge(local.common_tags, {
-    Name                                        = "PrivateSubnet-${data.aws_availability_zones.available.names[1]}"
+    Name                                           = "PrivateSubnet-${data.aws_availability_zones.available.names[1]}"
     "kubernetes.io/cluster/${local.cluster_name}" = "shared"
-    "kubernetes.io/role/internal-elb"             = "1"
+    "kubernetes.io/role/internal-elb"              = "1"
   })
 }
 
@@ -365,6 +371,11 @@ resource "aws_cloudfront_distribution" "app" {
       origin_protocol_policy = "http-only"
       origin_ssl_protocols   = ["TLSv1.2"]
     }
+
+    custom_header {
+      name  = "X-CloudFront-Secret"
+      value = var.cloudfront_secret
+    }
   }
 
   default_cache_behavior {
@@ -482,7 +493,7 @@ resource "aws_eks_cluster" "app" {
   }
 
   access_config {
-    authentication_mode                         = "API_AND_CONFIG_MAP"
+    authentication_mode                           = "API_AND_CONFIG_MAP"
     bootstrap_cluster_creator_admin_permissions = true
   }
 
