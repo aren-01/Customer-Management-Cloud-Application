@@ -14,8 +14,8 @@ env:
   TF_STATE_BUCKET: cma02-tfstate-${{ github.repository_owner }}
 
 jobs:
-  # This job now only reads the outputs of your existing infrastructure
-  get-infrastructure-outputs:
+  # 1. DEPLOY BASE INFRASTRUCTURE AND GET OUTPUTS
+  deploy-infrastructure:
     runs-on: ubuntu-latest
     outputs:
       aws_region: ${{ steps.infra_outputs.outputs.aws_region }}
@@ -58,6 +58,14 @@ jobs:
             -backend-config="region=${{ env.AWS_REGION }}" \
             -backend-config="use_lockfile=true"
 
+      - name: Terraform apply infrastructure
+        working-directory: terraform/infrastructure
+        run: |
+          set -euo pipefail
+          
+          # This builds your VPC, ECR, and EKS Cluster before anything else happens!
+          terraform apply -auto-approve
+
       - name: Read infrastructure outputs needed for image build and EKS
         id: infra_outputs
         working-directory: terraform/infrastructure
@@ -73,9 +81,10 @@ jobs:
           echo "registry_url=$REGISTRY_URL" >> "$GITHUB_OUTPUT"
           echo "eks_cluster_name=$EKS_CLUSTER_NAME" >> "$GITHUB_OUTPUT"
 
+  # 2. BUILD DOCKER IMAGE AND PUSH TO NEW ECR
   build-and-push:
     runs-on: ubuntu-latest
-    needs: get-infrastructure-outputs
+    needs: deploy-infrastructure
 
     outputs:
       image_tag: ${{ steps.image.outputs.image_tag }}
@@ -88,17 +97,17 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-region: ${{ needs.get-infrastructure-outputs.outputs.aws_region }}
+          aws-region: ${{ needs.deploy-infrastructure.outputs.aws_region }}
           role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
 
       - name: Login to Amazon ECR
         run: |
           set -euo pipefail
 
-          aws ecr get-login-password --region "${{ needs.get-infrastructure-outputs.outputs.aws_region }}" \
+          aws ecr get-login-password --region "${{ needs.deploy-infrastructure.outputs.aws_region }}" \
             | docker login \
               --username AWS \
-              --password-stdin "${{ needs.get-infrastructure-outputs.outputs.registry_url }}"
+              --password-stdin "${{ needs.deploy-infrastructure.outputs.registry_url }}"
 
       - name: Build Docker image with Docker Compose
         working-directory: app
@@ -114,8 +123,8 @@ jobs:
           set -euo pipefail
 
           IMAGE_TAG="${GITHUB_SHA}"
-          IMAGE_URI="${{ needs.get-infrastructure-outputs.outputs.ecr_repository_url }}:${IMAGE_TAG}"
-          LATEST_IMAGE_URI="${{ needs.get-infrastructure-outputs.outputs.ecr_repository_url }}:latest"
+          IMAGE_URI="${{ needs.deploy-infrastructure.outputs.ecr_repository_url }}:${IMAGE_TAG}"
+          LATEST_IMAGE_URI="${{ needs.deploy-infrastructure.outputs.ecr_repository_url }}:latest"
 
           docker tag "$LOCAL_IMAGE_NAME" "$IMAGE_URI"
           docker tag "$LOCAL_IMAGE_NAME" "$LATEST_IMAGE_URI"
@@ -126,10 +135,11 @@ jobs:
           echo "image_tag=$IMAGE_TAG" >> "$GITHUB_OUTPUT"
           echo "image_uri=$IMAGE_URI" >> "$GITHUB_OUTPUT"
 
+  # 3. DEPLOY TO KUBERNETES
   deploy-eks:
     runs-on: ubuntu-latest
     needs:
-      - get-infrastructure-outputs
+      - deploy-infrastructure
       - build-and-push
 
     steps:
@@ -150,8 +160,8 @@ jobs:
       - name: Terraform apply EKS service
         working-directory: terraform/eks-service
         env:
-          TF_STATE_BUCKET: ${{ needs.get-infrastructure-outputs.outputs.tf_state_bucket }}
-          ECR_REPOSITORY_URL: ${{ needs.get-infrastructure-outputs.outputs.ecr_repository_url }}
+          TF_STATE_BUCKET: ${{ needs.deploy-infrastructure.outputs.tf_state_bucket }}
+          ECR_REPOSITORY_URL: ${{ needs.deploy-infrastructure.outputs.ecr_repository_url }}
           IMAGE_TAG: ${{ needs.build-and-push.outputs.image_tag }}
         run: |
           set -euo pipefail
@@ -168,8 +178,8 @@ jobs:
 
       - name: Deploy application to EKS cluster
         env:
-          CLUSTER_NAME: ${{ needs.get-infrastructure-outputs.outputs.eks_cluster_name }}
-          IMAGE_URI: ${{ needs.get-infrastructure-outputs.outputs.ecr_repository_url }}:${{ needs.build-and-push.outputs.image_tag }}
+          CLUSTER_NAME: ${{ needs.deploy-infrastructure.outputs.eks_cluster_name }}
+          IMAGE_URI: ${{ needs.deploy-infrastructure.outputs.ecr_repository_url }}:${{ needs.build-and-push.outputs.image_tag }}
         run: |
           set -euo pipefail
 
