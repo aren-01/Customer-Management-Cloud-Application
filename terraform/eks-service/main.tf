@@ -161,7 +161,7 @@ resource "aws_subnet" "private_a" {
   tags = merge(local.common_tags, {
     Name                                           = "PrivateSubnet-${data.aws_availability_zones.available.names[0]}"
     "kubernetes.io/cluster/${local.cluster_name}" = "shared"
-    "kubernetes.io/role/internal-elb"              = "1"
+    "kubernetes.io/role/internal-elb"             = "1"
   })
 }
 
@@ -174,7 +174,7 @@ resource "aws_subnet" "private_b" {
   tags = merge(local.common_tags, {
     Name                                           = "PrivateSubnet-${data.aws_availability_zones.available.names[1]}"
     "kubernetes.io/cluster/${local.cluster_name}" = "shared"
-    "kubernetes.io/role/internal-elb"              = "1"
+    "kubernetes.io/role/internal-elb"             = "1"
   })
 }
 
@@ -356,10 +356,10 @@ resource "aws_cognito_user_pool_domain" "main" {
 }
 
 resource "aws_cloudfront_distribution" "app" {
-  enabled         = true
-  is_ipv6_enabled = true
-  comment         = "CloudFront distribution with custom HTTP origin for ${local.app_name} ${local.environment}"
-  price_class     = "PriceClass_100"
+  enabled             = true
+  is_ipv6_enabled     = true
+  comment             = "CloudFront distribution with custom HTTP origin for ${local.app_name} ${local.environment}"
+  price_class         = "PriceClass_100"
 
   origin {
     domain_name = local.custom_origin_domain
@@ -400,33 +400,6 @@ resource "aws_cloudfront_distribution" "app" {
   }
 
   tags = local.common_tags
-}
-
-resource "aws_iam_role" "ec2_role" {
-  name = "ec2-ssm-role"
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect = "Allow"
-      Principal = {
-        Service = "ec2.amazonaws.com"
-      }
-      Action = "sts:AssumeRole"
-    }]
-  })
-
-  tags = local.common_tags
-}
-
-resource "aws_iam_role_policy_attachment" "ssm" {
-  role       = aws_iam_role.ec2_role.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
-}
-
-resource "aws_iam_instance_profile" "ec2_profile" {
-  name = "ec2-ssm-profile"
-  role = aws_iam_role.ec2_role.name
 }
 
 resource "aws_iam_role" "eks_cluster_role" {
@@ -493,7 +466,7 @@ resource "aws_eks_cluster" "app" {
   }
 
   access_config {
-    authentication_mode                           = "API_AND_CONFIG_MAP"
+    authentication_mode                        = "API_AND_CONFIG_MAP"
     bootstrap_cluster_creator_admin_permissions = true
   }
 
@@ -614,10 +587,6 @@ output "temporary_ec2_subnet_id" {
 
 output "temporary_ec2_security_group_id" {
   value = aws_security_group.ec2.id
-}
-
-output "temporary_ec2_instance_profile_name" {
-  value = aws_iam_instance_profile.ec2_profile.name
 }
 
 output "temporary_ec2_ami_id" {
