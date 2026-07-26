@@ -62,7 +62,8 @@ locals {
     "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy",
     "arn:aws:iam::aws:policy/AmazonEKSWorkerNodeMinimalPolicy",
     "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy",
-    "arn:aws:iam::aws:policy/AmazonElasticContainerRegistryPublicReadOnly"
+    "arn:aws:iam::aws:policy/AmazonElasticContainerRegistryPublicReadOnly",
+    "arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy"
   ]
 
   common_tags = {
@@ -77,10 +78,6 @@ data "aws_availability_zones" "available" {
 data "aws_caller_identity" "current" {}
 
 data "aws_region" "current" {}
-
-data "aws_ssm_parameter" "al2023_ami" {
-  name = "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64"
-}
 
 data "aws_cloudfront_cache_policy" "caching_disabled" {
   name = "Managed-CachingDisabled"
@@ -161,7 +158,7 @@ resource "aws_subnet" "private_a" {
   tags = merge(local.common_tags, {
     Name                                           = "PrivateSubnet-${data.aws_availability_zones.available.names[0]}"
     "kubernetes.io/cluster/${local.cluster_name}" = "shared"
-    "kubernetes.io/role/internal-elb"             = "1"
+    "kubernetes.io/role/internal-elb"              = "1"
   })
 }
 
@@ -174,7 +171,7 @@ resource "aws_subnet" "private_b" {
   tags = merge(local.common_tags, {
     Name                                           = "PrivateSubnet-${data.aws_availability_zones.available.names[1]}"
     "kubernetes.io/cluster/${local.cluster_name}" = "shared"
-    "kubernetes.io/role/internal-elb"             = "1"
+    "kubernetes.io/role/internal-elb"              = "1"
   })
 }
 
@@ -241,23 +238,6 @@ resource "aws_security_group" "vpc_endpoints" {
 
   tags = merge(local.common_tags, {
     Name = "VpcEndpointsSG"
-  })
-}
-
-resource "aws_security_group" "ec2" {
-  name        = "healthcare-ec2-ssm-sg"
-  description = "EC2 SG for SSM access; no SSH required"
-  vpc_id      = aws_vpc.main.id
-
-  egress {
-    protocol    = "-1"
-    from_port   = 0
-    to_port     = 0
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  tags = merge(local.common_tags, {
-    Name = "Ec2SsmSG"
   })
 }
 
@@ -466,7 +446,7 @@ resource "aws_eks_cluster" "app" {
   }
 
   access_config {
-    authentication_mode                        = "API_AND_CONFIG_MAP"
+    authentication_mode                         = "API_AND_CONFIG_MAP"
     bootstrap_cluster_creator_admin_permissions = true
   }
 
@@ -493,6 +473,11 @@ resource "aws_eks_addon" "kube_proxy" {
   addon_name   = "kube-proxy"
 }
 
+resource "aws_eks_addon" "ebs_csi" {
+  cluster_name = aws_eks_cluster.app.name
+  addon_name   = "aws-ebs-csi-driver"
+}
+
 resource "aws_eks_node_group" "app" {
   cluster_name    = aws_eks_cluster.app.name
   node_group_name = "db-and-app"
@@ -510,7 +495,8 @@ resource "aws_eks_node_group" "app" {
     aws_iam_role_policy_attachment.eks_node_role_policies,
     aws_eks_access_entry.node_linux,
     aws_eks_addon.vpc_cni,
-    aws_eks_addon.kube_proxy
+    aws_eks_addon.kube_proxy,
+    aws_eks_addon.ebs_csi
   ]
 
   tags = local.common_tags
@@ -581,16 +567,8 @@ output "aws_region" {
   value = data.aws_region.current.name
 }
 
-output "temporary_ec2_subnet_id" {
+output "eks_subnet" {
   value = aws_subnet.private_a.id
-}
-
-output "temporary_ec2_security_group_id" {
-  value = aws_security_group.ec2.id
-}
-
-output "temporary_ec2_ami_id" {
-  value = nonsensitive(data.aws_ssm_parameter.al2023_ami.value)
 }
 
 output "internet_gateway_id" {
