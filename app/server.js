@@ -15,7 +15,7 @@ const requiredEnvVars = [
   "COGNITO_CLIENT_ID",
   "COGNITO_CLIENT_SECRET",
   "SESSION_SECRET",
-  "CLOUDFRONT_SECRET", // Added this here
+  "CLOUDFRONT_SECRET", 
   "DB_HOST",
   "DB_USER",
   "DB_PASS",
