@@ -8,6 +8,10 @@ terraform {
       source  = "hashicorp/aws"
       version = ">= 5.82.0, < 7.0"
     }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.0"
+    }
   }
 }
 
@@ -18,6 +22,24 @@ provider "aws" {
 variable "cloudfront_secret" {
   type        = string
   description = "Custom secret header value supplied by GitHub Actions"
+  sensitive   = true
+}
+
+variable "db_user" {
+  type        = string
+  description = "Database user supplied by GitHub Actions"
+  sensitive   = true
+}
+
+variable "db_pass" {
+  type        = string
+  description = "Database password supplied by GitHub Actions"
+  sensitive   = true
+}
+
+variable "session_secret" {
+  type        = string
+  description = "App session secret supplied by GitHub Actions"
   sensitive   = true
 }
 
@@ -38,15 +60,6 @@ locals {
 
   cognito_callback_url = "https://example.com/auth/callback"
   cognito_logout_url   = "https://example.com/"
-
-  interface_vpc_endpoint_services = toset([
-    "ecr.api",
-    "ecr.dkr",
-    "logs",
-    "ssm",
-    "ssmmessages",
-    "ec2messages"
-  ])
 
   eks_cluster_policies = [
     "arn:aws:iam::aws:policy/AmazonEKSBlockStoragePolicyV2",
@@ -130,9 +143,9 @@ resource "aws_subnet" "public_a" {
   map_public_ip_on_launch = true
 
   tags = merge(local.common_tags, {
-    Name                                           = "PublicSubnet-${data.aws_availability_zones.available.names[0]}"
+    Name                                          = "PublicSubnet-${data.aws_availability_zones.available.names[0]}"
     "kubernetes.io/cluster/${local.cluster_name}" = "shared"
-    "kubernetes.io/role/elb"                       = "1"
+    "kubernetes.io/role/elb"                      = "1"
   })
 }
 
@@ -143,9 +156,9 @@ resource "aws_subnet" "public_b" {
   map_public_ip_on_launch = true
 
   tags = merge(local.common_tags, {
-    Name                                           = "PublicSubnet-${data.aws_availability_zones.available.names[1]}"
+    Name                                          = "PublicSubnet-${data.aws_availability_zones.available.names[1]}"
     "kubernetes.io/cluster/${local.cluster_name}" = "shared"
-    "kubernetes.io/role/elb"                       = "1"
+    "kubernetes.io/role/elb"                      = "1"
   })
 }
 
@@ -156,9 +169,9 @@ resource "aws_subnet" "private_a" {
   map_public_ip_on_launch = false
 
   tags = merge(local.common_tags, {
-    Name                                           = "PrivateSubnet-${data.aws_availability_zones.available.names[0]}"
+    Name                                          = "PrivateSubnet-${data.aws_availability_zones.available.names[0]}"
     "kubernetes.io/cluster/${local.cluster_name}" = "shared"
-    "kubernetes.io/role/internal-elb"              = "1"
+    "kubernetes.io/role/internal-elb"             = "1"
   })
 }
 
@@ -169,9 +182,9 @@ resource "aws_subnet" "private_b" {
   map_public_ip_on_launch = false
 
   tags = merge(local.common_tags, {
-    Name                                           = "PrivateSubnet-${data.aws_availability_zones.available.names[1]}"
+    Name                                          = "PrivateSubnet-${data.aws_availability_zones.available.names[1]}"
     "kubernetes.io/cluster/${local.cluster_name}" = "shared"
-    "kubernetes.io/role/internal-elb"              = "1"
+    "kubernetes.io/role/internal-elb"             = "1"
   })
 }
 
@@ -214,57 +227,6 @@ resource "aws_route_table_association" "private_a" {
 resource "aws_route_table_association" "private_b" {
   subnet_id      = aws_subnet.private_b.id
   route_table_id = aws_route_table.private.id
-}
-
-resource "aws_security_group" "vpc_endpoints" {
-  name        = "healthcare-vpc-endpoints-sg"
-  description = "Allow VPC subnets to reach AWS service VPC endpoints"
-  vpc_id      = aws_vpc.main.id
-
-  ingress {
-    description = "HTTPS from inside VPC"
-    protocol    = "tcp"
-    from_port   = 443
-    to_port     = 443
-    cidr_blocks = [local.vpc_cidr]
-  }
-
-  egress {
-    protocol    = "-1"
-    from_port   = 0
-    to_port     = 0
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  tags = merge(local.common_tags, {
-    Name = "VpcEndpointsSG"
-  })
-}
-
-resource "aws_vpc_endpoint" "interface" {
-  for_each = local.interface_vpc_endpoint_services
-
-  vpc_id              = aws_vpc.main.id
-  service_name        = "com.amazonaws.${data.aws_region.current.name}.${each.value}"
-  vpc_endpoint_type   = "Interface"
-  subnet_ids          = [aws_subnet.private_a.id, aws_subnet.private_b.id]
-  security_group_ids  = [aws_security_group.vpc_endpoints.id]
-  private_dns_enabled = true
-
-  tags = merge(local.common_tags, {
-    Name = "${each.value}-endpoint"
-  })
-}
-
-resource "aws_vpc_endpoint" "s3" {
-  vpc_id            = aws_vpc.main.id
-  service_name      = "com.amazonaws.${data.aws_region.current.name}.s3"
-  vpc_endpoint_type = "Gateway"
-  route_table_ids   = [aws_route_table.private.id]
-
-  tags = merge(local.common_tags, {
-    Name = "s3-gateway-endpoint"
-  })
 }
 
 resource "aws_cognito_user_pool" "app" {
@@ -336,10 +298,10 @@ resource "aws_cognito_user_pool_domain" "main" {
 }
 
 resource "aws_cloudfront_distribution" "app" {
-  enabled             = true
-  is_ipv6_enabled     = true
-  comment             = "CloudFront distribution with custom HTTP origin for ${local.app_name} ${local.environment}"
-  price_class         = "PriceClass_100"
+  enabled         = true
+  is_ipv6_enabled = true
+  comment         = "CloudFront distribution with custom HTTP origin for ${local.app_name} ${local.environment}"
+  price_class     = "PriceClass_100"
 
   origin {
     domain_name = local.custom_origin_domain
@@ -502,6 +464,51 @@ resource "aws_eks_node_group" "app" {
   tags = local.common_tags
 }
 
+# ==========================================
+# SECRETS MANAGEMENT FOR EXTERNAL SECRETS
+# ==========================================
+
+# Maintain this to secure the database root user internally
+resource "random_password" "db_root_password" {
+  length  = 16
+  special = false
+}
+
+# Create the AWS Secrets Manager Secret container
+resource "aws_secretsmanager_secret" "app_secrets" {
+  name                    = "my-app/production-secrets"
+  description             = "App and Database secrets provisioned by Terraform"
+  recovery_window_in_days = 0 
+  
+  tags = local.common_tags
+}
+
+# Write the JSON payload that External Secrets Operator (ESO) will read
+resource "aws_secretsmanager_secret_version" "app_secrets_val" {
+  secret_id = aws_secretsmanager_secret.app_secrets.id
+  secret_string = jsonencode({
+    # --- NOW PULLING FROM GITHUB SECRETS (VIA TERRAFORM VARS) ---
+    DB_USER               = var.db_user
+    DB_PASSWORD           = var.db_pass
+    SESSION_SECRET        = var.session_secret
+    CLOUDFRONT_SECRET     = var.cloudfront_secret
+
+    # --- STILL HANDLED DYNAMICALLY BY TERRAFORM ---
+    DB_NAME               = "mydb"
+    DB_ROOT_PASSWORD      = random_password.db_root_password.result
+    APP_BASE_URL          = "https://${aws_cloudfront_distribution.app.domain_name}"
+    
+    COGNITO_DOMAIN        = "https://${aws_cognito_user_pool_domain.main.domain}.auth.${data.aws_region.current.name}.amazoncognito.com"
+    COGNITO_USER_POOL_ID  = aws_cognito_user_pool.app.id
+    COGNITO_CLIENT_ID     = aws_cognito_user_pool_client.web.id
+    COGNITO_CLIENT_SECRET = aws_cognito_user_pool_client.web.client_secret
+  })
+}
+
+# ==========================================
+# OUTPUTS
+# ==========================================
+
 output "vpc_id" {
   value = aws_vpc.main.id
 }
@@ -553,14 +560,6 @@ output "cognito_logout_url" {
 
 output "ecr_repository_url" {
   value = aws_ecr_repository.app.repository_url
-}
-
-output "vpc_interface_endpoint_ids" {
-  value = { for service, endpoint in aws_vpc_endpoint.interface : service => endpoint.id }
-}
-
-output "s3_gateway_endpoint_id" {
-  value = aws_vpc_endpoint.s3.id
 }
 
 output "aws_region" {
