@@ -14,7 +14,7 @@ env:
   TF_STATE_BUCKET: cma02-tfstate-${{ github.repository_owner }}
 
 jobs:
-  # 1. DEPLOY INFRASTRUCTURE & EKS FROM MERGED FOLDER
+  
   deploy-infrastructure:
     runs-on: ubuntu-latest
     outputs:
@@ -97,7 +97,7 @@ jobs:
         run: |
           set -euo pipefail
           
-          # This provisions your VPC, ECR, and EKS Cluster from the merged folder!
+          # This provisions your VPC, ECR, EKS Cluster, and AWS Secrets Manager!
           terraform apply -auto-approve
 
       - name: Read infrastructure outputs needed for image build and EKS
@@ -115,7 +115,7 @@ jobs:
           echo "registry_url=$REGISTRY_URL" >> "$GITHUB_OUTPUT"
           echo "eks_cluster_name=$EKS_CLUSTER_NAME" >> "$GITHUB_OUTPUT"
 
-  # 2. BUILD DOCKER IMAGE AND PUSH TO NEW ECR
+  
   build-and-push:
     runs-on: ubuntu-latest
     needs: deploy-infrastructure
@@ -169,7 +169,7 @@ jobs:
           echo "image_tag=$IMAGE_TAG" >> "$GITHUB_OUTPUT"
           echo "image_uri=$IMAGE_URI" >> "$GITHUB_OUTPUT"
 
-  # 3. DEPLOY TO KUBERNETES
+  
   deploy-eks:
     runs-on: ubuntu-latest
     needs:
@@ -186,15 +186,35 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
           role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
 
-      - name: Deploy application to EKS cluster
+      - name: Setup Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: 'latest'
+
+      - name: Install ESO & Deploy Application Helm Chart
         env:
           CLUSTER_NAME: ${{ needs.deploy-infrastructure.outputs.eks_cluster_name }}
-          IMAGE_URI: ${{ needs.deploy-infrastructure.outputs.ecr_repository_url }}:${{ needs.build-and-push.outputs.image_tag }}
+          ECR_REPOSITORY: ${{ needs.deploy-infrastructure.outputs.ecr_repository_url }}
+          IMAGE_TAG: ${{ needs.build-and-push.outputs.image_tag }}
         run: |
           set -euo pipefail
 
-          # Authenticate kubectl with the EKS cluster
-          aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name $CLUSTER_NAME
+          # 1. Authenticate kubectl with the EKS cluster
+          aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name "$CLUSTER_NAME"
 
-          # Deploy the pod
-          kubectl run my-app-pod --image=$IMAGE_URI
+          # 2. Install/Upgrade External Secrets Operator Controller
+          helm repo add external-secrets https://charts.external-secrets.io
+          helm repo update
+          helm upgrade --install external-secrets external-secrets/external-secrets \
+            --namespace external-secrets \
+            --create-namespace \
+            --wait
+
+          # 3. Deploy App Helm Chart (located at ./helm-chart)
+          helm upgrade --install customer-management-app ./helm-chart \
+            --namespace default \
+            --create-namespace \
+            --set app.image.repository="$ECR_REPOSITORY" \
+            --set app.image.tag="$IMAGE_TAG" \
+            --wait \
+            --timeout 5m0s
