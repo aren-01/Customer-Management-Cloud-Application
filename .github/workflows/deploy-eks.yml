@@ -23,6 +23,7 @@ jobs:
       registry_url: ${{ steps.infra_outputs.outputs.registry_url }}
       tf_state_bucket: ${{ steps.tfstate.outputs.bucket_name }}
       eks_cluster_name: ${{ steps.infra_outputs.outputs.eks_cluster_name }}
+      cloudfront_distribution_id: ${{ steps.infra_outputs.outputs.cloudfront_distribution_id }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -112,11 +113,13 @@ jobs:
           ECR_REPOSITORY_URL=$(terraform output -raw ecr_repository_url)
           REGISTRY_URL=$(echo "$ECR_REPOSITORY_URL" | cut -d/ -f1)
           EKS_CLUSTER_NAME=$(terraform output -raw eks_cluster_name)
+          CLOUDFRONT_DIST_ID=$(terraform output -raw cloudfront_distribution_id 2>/dev/null || echo "")
 
           echo "aws_region=$(terraform output -raw aws_region)" >> "$GITHUB_OUTPUT"
           echo "ecr_repository_url=$ECR_REPOSITORY_URL" >> "$GITHUB_OUTPUT"
           echo "registry_url=$REGISTRY_URL" >> "$GITHUB_OUTPUT"
           echo "eks_cluster_name=$EKS_CLUSTER_NAME" >> "$GITHUB_OUTPUT"
+          echo "cloudfront_distribution_id=$CLOUDFRONT_DIST_ID" >> "$GITHUB_OUTPUT"
 
   
   build-and-push:
@@ -221,3 +224,47 @@ jobs:
             --set app.image.tag="$IMAGE_TAG" \
             --wait \
             --timeout 5m0s
+
+      - name: Automatically Update CloudFront Origin with LoadBalancer URL
+        env:
+          DIST_ID: ${{ needs.deploy-infrastructure.outputs.cloudfront_distribution_id }}
+        run: |
+          set -euo pipefail
+          
+          if [ -z "$DIST_ID" ]; then
+            echo "CloudFront Distribution ID output not found in Terraform. Skipping automated update."
+            exit 0
+          fi
+
+          echo "Waiting for LoadBalancer hostname to become available..."
+          LB_URL=""
+          for i in {1..30}; do
+            LB_URL=$(kubectl get svc app-service -n default -o jsonpath='{.status.load_balancer.ingress[0].hostname}' 2>/dev/null || true)
+            if [ -n "$LB_URL" ]; then
+              break
+            fi
+            echo "Attempt $i: LoadBalancer not ready yet, waiting 10 seconds..."
+            sleep 10
+          done
+
+          if [ -z "$LB_URL" ]; then
+            echo "Error: Timed out waiting for LoadBalancer URL."
+            exit 1
+          fi
+
+          echo "Found LoadBalancer URL: $LB_URL"
+          echo "Updating CloudFront distribution $DIST_ID..."
+
+          aws cloudfront get-distribution-config --id "$DIST_ID" > cf-config.json
+          ETAG=$(jq -r '.ETag' cf-config.json)
+          jq '.DistributionConfig' cf-config.json > cf-spec.json
+
+          # Update the custom origin domain name dynamically
+          jq --arg url "$LB_URL" '.Origins.Items[0].DomainName = $url' cf-spec.json > cf-spec-updated.json
+
+          aws cloudfront update-distribution \
+            --id "$DIST_ID" \
+            --distribution-config file://cf-spec-updated.json \
+            --if-match "$ETAG"
+
+          echo "Successfully updated CloudFront origin domain to: $LB_URL"
