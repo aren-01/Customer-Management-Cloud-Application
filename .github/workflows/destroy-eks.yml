@@ -1,0 +1,130 @@
+name: Destroy Customer Management Infrastructure
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  TF_STATE_BUCKET: cma02-tfstate-${{ github.repository_owner }}
+
+jobs:
+  destroy-all:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: 'latest'
+
+      - name: Format S3 Bucket Name
+        id: tfstate
+        run: |
+          set -euo pipefail
+          BUCKET_NAME=$(echo "${TF_STATE_BUCKET}" | tr '[:upper:]' '[:lower:]' | tr '_' '-')
+          echo "bucket_name=$BUCKET_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Terraform Init (eks-service)
+        working-directory: terraform/eks-service
+        run: |
+          set -euo pipefail
+          terraform init \
+            -backend-config="bucket=${{ steps.tfstate.outputs.bucket_name }}" \
+            -backend-config="key=customermanagementapp/eks-service/terraform.tfstate" \
+            -backend-config="region=${{ env.AWS_REGION }}" \
+            -backend-config="use_lockfile=true"
+
+      
+      - name: Delete Helm Releases & Kubernetes Resources
+        working-directory: terraform/eks-service
+        run: |
+          set -euo pipefail
+
+          EKS_CLUSTER_NAME=$(terraform output -raw eks_cluster_name 2>/dev/null || echo "")
+
+          if [ -n "$EKS_CLUSTER_NAME" ]; then
+            echo "Connecting to EKS cluster: $EKS_CLUSTER_NAME"
+            if aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name "$EKS_CLUSTER_NAME"; then
+              echo "Uninstalling Helm releases..."
+              helm uninstall customer-management-app -n default --wait || true
+              helm uninstall external-secrets -n external-secrets --wait || true
+
+              echo "Deleting remaining LoadBalancers and PVs to free AWS resources..."
+              kubectl delete svc --all -n default || true
+              kubectl delete pvc --all -n default || true
+              kubectl delete ns external-secrets || true
+            fi
+          else
+            echo "EKS cluster not found in state, skipping Kubernetes resource cleanup."
+          fi
+
+     
+      - name: Terraform Destroy
+        working-directory: terraform/eks-service
+        env:
+          TF_VAR_cloudfront_secret: ${{ secrets.CLOUDFRONT_SECRET }}
+          TF_VAR_db_user: ${{ secrets.DB_USER }}
+          TF_VAR_db_pass: ${{ secrets.DB_PASS }}
+          TF_VAR_session_secret: ${{ secrets.SESSION_SECRET }}
+        run: |
+          set -euo pipefail
+          terraform destroy -auto-approve
+
+    
+      - name: Force Delete Secrets Manager Secret
+        run: |
+          set -euo pipefail
+          SECRET_NAME="my-app/production-secrets"
+
+          if aws secretsmanager describe-secret --secret-id "$SECRET_NAME" --region "${AWS_REGION}" 2>/dev/null; then
+            echo "Force deleting secret: $SECRET_NAME..."
+            aws secretsmanager delete-secret \
+              --secret-id "$SECRET_NAME" \
+              --force-delete-without-recovery \
+              --region "${AWS_REGION}" || true
+          fi
+
+      
+      - name: Empty and Delete S3 State Bucket
+        run: |
+          set -euo pipefail
+          BUCKET_NAME="${{ steps.tfstate.outputs.bucket_name }}"
+
+          if aws s3api head-bucket --bucket "$BUCKET_NAME" 2>/dev/null; then
+            echo "Emptying S3 bucket $BUCKET_NAME including all versions and markers..."
+
+            # Delete all object versions
+            aws s3api list-object-versions --bucket "$BUCKET_NAME" --query '{Objects: Versions[].{Key:Key,VersionId:VersionId}}' --output json > versions.json
+            if [ $(jq '.Objects | length' versions.json) -gt 0 ]; then
+              aws s3api delete-objects --bucket "$BUCKET_NAME" --delete file://versions.json
+            fi
+
+            # Delete all delete markers
+            aws s3api list-object-versions --bucket "$BUCKET_NAME" --query '{Objects: DeleteMarkers[].{Key:Key,VersionId:VersionId}}' --output json > markers.json
+            if [ $(jq '.Objects | length' markers.json) -gt 0 ]; then
+              aws s3api delete-objects --bucket "$BUCKET_NAME" --delete file://markers.json
+            fi
+
+            echo "Deleting S3 bucket $BUCKET_NAME..."
+            aws s3api delete-bucket --bucket "$BUCKET_NAME" --region "${AWS_REGION}"
+            echo "S3 bucket successfully deleted."
+          else
+            echo "S3 state bucket $BUCKET_NAME does not exist. Skipping."
+          fi
