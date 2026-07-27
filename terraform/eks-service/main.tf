@@ -661,6 +661,11 @@ output "eks_cluster_endpoint" {
   value = aws_eks_cluster.app.endpoint
 }
 
+output "cloudfront_distribution_id" {
+  description = "The ID of the CloudFront distribution"
+  value = aws_cloudfront_distribution.app.id 
+}
+
 output "eks_cluster_role_arn" {
   value = aws_iam_role.eks_cluster_role.arn
 }
