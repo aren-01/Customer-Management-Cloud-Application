@@ -249,7 +249,7 @@ jobs:
           echo "Waiting for LoadBalancer hostname to become available..."
           LB_URL=""
           for i in {1..30}; do
-            LB_URL=$(kubectl get svc app-service -n default -o jsonpath='{.status.load_balancer.ingress[0].hostname}' 2>/devnull || true)
+            LB_URL=$(kubectl get svc app-service -n default -o jsonpath='{.status.load_balancer.ingress[0].hostname}' 2>/dev/null || true)
             if [ -n "$LB_URL" ]; then
               break
             fi
