@@ -1,0 +1,10 @@
+name: Destroy Customer Management Infrastructure – EKS Version
+
+on:
+  workflow_dispatch:
+
+jobs:
+  placeholder-job:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "This is a placeholder so GitHub shows the Run button!"
