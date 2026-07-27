@@ -1,4 +1,4 @@
-name: Destroy Customer Management Infrastructure – Kubernetes Version
+name: Destroy Customer Management Infrastructure – EKS Version
 
 on:
   workflow_dispatch:
