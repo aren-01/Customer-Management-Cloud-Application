@@ -24,6 +24,8 @@ jobs:
       tf_state_bucket: ${{ steps.tfstate.outputs.bucket_name }}
       eks_cluster_name: ${{ steps.infra_outputs.outputs.eks_cluster_name }}
       cloudfront_distribution_id: ${{ steps.infra_outputs.outputs.cloudfront_distribution_id }}
+      # --- ADDED: Pass the new IAM Role ARN to the next jobs ---
+      external_secrets_role_arn: ${{ steps.infra_outputs.outputs.external_secrets_role_arn }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -114,12 +116,16 @@ jobs:
           REGISTRY_URL=$(echo "$ECR_REPOSITORY_URL" | cut -d/ -f1)
           EKS_CLUSTER_NAME=$(terraform output -raw eks_cluster_name)
           CLOUDFRONT_DIST_ID=$(terraform output -raw cloudfront_distribution_id 2>/dev/null || echo "")
+          
+          # --- ADDED: Extract the IAM Role ARN ---
+          EXT_SECRETS_ROLE_ARN=$(terraform output -raw external_secrets_role_arn 2>/dev/null || echo "")
 
           echo "aws_region=$(terraform output -raw aws_region)" >> "$GITHUB_OUTPUT"
           echo "ecr_repository_url=$ECR_REPOSITORY_URL" >> "$GITHUB_OUTPUT"
           echo "registry_url=$REGISTRY_URL" >> "$GITHUB_OUTPUT"
           echo "eks_cluster_name=$EKS_CLUSTER_NAME" >> "$GITHUB_OUTPUT"
           echo "cloudfront_distribution_id=$CLOUDFRONT_DIST_ID" >> "$GITHUB_OUTPUT"
+          echo "external_secrets_role_arn=$EXT_SECRETS_ROLE_ARN" >> "$GITHUB_OUTPUT"
 
   
   build-and-push:
@@ -202,6 +208,8 @@ jobs:
           CLUSTER_NAME: ${{ needs.deploy-infrastructure.outputs.eks_cluster_name }}
           ECR_REPOSITORY: ${{ needs.deploy-infrastructure.outputs.ecr_repository_url }}
           IMAGE_TAG: ${{ needs.build-and-push.outputs.image_tag }}
+          # --- ADDED: Make the ARN available to the script ---
+          EXT_SECRETS_ROLE_ARN: ${{ needs.deploy-infrastructure.outputs.external_secrets_role_arn }}
         run: |
           set -euo pipefail
 
@@ -217,11 +225,13 @@ jobs:
             --wait
 
           # 3. Deploy App Helm Chart (located at ./helm-chart)
+          # --- ADDED: --set serviceAccount.roleArn dynamically sets your annotation! ---
           helm upgrade --install customer-management-app ./helm-chart \
             --namespace default \
             --create-namespace \
             --set app.image.repository="$ECR_REPOSITORY" \
             --set app.image.tag="$IMAGE_TAG" \
+            --set serviceAccount.roleArn="$EXT_SECRETS_ROLE_ARN" \
             --wait \
             --timeout 5m0s
 
