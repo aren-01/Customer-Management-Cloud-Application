@@ -62,9 +62,6 @@ locals {
   custom_origin_domain = "example.com"
   cloudfront_origin_id = "custom-http-origin"
 
-  cognito_callback_url = "https://example.com/auth/callback"
-  cognito_logout_url   = "https://example.com/"
-
   eks_cluster_policies = [
     "arn:aws:iam::aws:policy/AmazonEKSBlockStoragePolicyV2",
     "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy",
@@ -283,8 +280,8 @@ resource "aws_cognito_user_pool_client" "web" {
   allowed_oauth_flows_user_pool_client = true
   allowed_oauth_flows                  = ["code"]
   allowed_oauth_scopes                 = ["email", "openid", "profile"]
-  callback_urls                        = [local.cognito_callback_url]
-  logout_urls                          = [local.cognito_logout_url]
+  callback_urls                        = ["https://${aws_cloudfront_distribution.app.domain_name}/auth/callback"]
+  logout_urls                          = ["https://${aws_cloudfront_distribution.app.domain_name}/"]
 
   explicit_auth_flows = [
     "ALLOW_REFRESH_TOKEN_AUTH",
@@ -540,7 +537,7 @@ resource "aws_secretsmanager_secret_version" "app_secrets_val" {
   })
 }
 
-# --- ADDED: EXTERNAL SECRETS OPERATOR IRSA ROLE & POLICY ---
+# --- EXTERNAL SECRETS OPERATOR IRSA ROLE & POLICY ---
 
 resource "aws_iam_role" "external_secrets" {
   name = "${local.cluster_name}-external-secrets-role"
@@ -626,15 +623,15 @@ output "cognito_domain" {
 }
 
 output "cognito_login_url" {
-  value = "https://${aws_cognito_user_pool_domain.main.domain}.auth.${data.aws_region.current.region}.amazoncognito.com/login?client_id=${aws_cognito_user_pool_client.web.id}&response_type=code&scope=email+openid+profile&redirect_uri=${urlencode(local.cognito_callback_url)}"
+  value = "https://${aws_cognito_user_pool_domain.main.domain}.auth.${data.aws_region.current.region}.amazoncognito.com/login?client_id=${aws_cognito_user_pool_client.web.id}&response_type=code&scope=email+openid+profile&redirect_uri=${urlencode("https://${aws_cloudfront_distribution.app.domain_name}/auth/callback")}"
 }
 
 output "cognito_callback_url" {
-  value = local.cognito_callback_url
+  value = "https://${aws_cloudfront_distribution.app.domain_name}/auth/callback"
 }
 
 output "cognito_logout_url" {
-  value = local.cognito_logout_url
+  value = "https://${aws_cloudfront_distribution.app.domain_name}/"
 }
 
 output "ecr_repository_url" {
@@ -663,7 +660,7 @@ output "eks_cluster_endpoint" {
 
 output "cloudfront_distribution_id" {
   description = "The ID of the CloudFront distribution"
-  value = aws_cloudfront_distribution.app.id 
+  value       = aws_cloudfront_distribution.app.id 
 }
 
 output "eks_cluster_role_arn" {
