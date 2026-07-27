@@ -9,9 +9,6 @@ app:
     port: 80
     targetPort: 3000
 
-
-
-
 database:
   serviceName: "db-service"
   port: 3306
@@ -23,3 +20,8 @@ database:
     storageSize: "8Gi"
   secret:
     name: "db-my"  
+
+serviceAccount:
+  create: true
+  name: "aws-secrets-sa"
+  roleArn: "" 
