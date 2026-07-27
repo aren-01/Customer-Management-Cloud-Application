@@ -12,6 +12,10 @@ terraform {
       source  = "hashicorp/random"
       version = "~> 3.0"
     }
+    tls = {
+      source  = "hashicorp/tls"
+      version = "~> 4.0"
+    }
   }
 }
 
@@ -75,8 +79,7 @@ locals {
     "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy",
     "arn:aws:iam::aws:policy/AmazonEKSWorkerNodeMinimalPolicy",
     "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy",
-    "arn:aws:iam::aws:policy/AmazonElasticContainerRegistryPublicReadOnly",
-    "arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy"
+    "arn:aws:iam::aws:policy/AmazonElasticContainerRegistryPublicReadOnly"
   ]
 
   common_tags = {
@@ -143,7 +146,7 @@ resource "aws_subnet" "public_a" {
   map_public_ip_on_launch = true
 
   tags = merge(local.common_tags, {
-    Name                                          = "PublicSubnet-${data.aws_availability_zones.available.names[0]}"
+    Name                                           = "PublicSubnet-${data.aws_availability_zones.available.names[0]}"
     "kubernetes.io/cluster/${local.cluster_name}" = "shared"
     "kubernetes.io/role/elb"                      = "1"
   })
@@ -156,7 +159,7 @@ resource "aws_subnet" "public_b" {
   map_public_ip_on_launch = true
 
   tags = merge(local.common_tags, {
-    Name                                          = "PublicSubnet-${data.aws_availability_zones.available.names[1]}"
+    Name                                           = "PublicSubnet-${data.aws_availability_zones.available.names[1]}"
     "kubernetes.io/cluster/${local.cluster_name}" = "shared"
     "kubernetes.io/role/elb"                      = "1"
   })
@@ -169,7 +172,7 @@ resource "aws_subnet" "private_a" {
   map_public_ip_on_launch = false
 
   tags = merge(local.common_tags, {
-    Name                                          = "PrivateSubnet-${data.aws_availability_zones.available.names[0]}"
+    Name                                           = "PrivateSubnet-${data.aws_availability_zones.available.names[0]}"
     "kubernetes.io/cluster/${local.cluster_name}" = "shared"
     "kubernetes.io/role/internal-elb"             = "1"
   })
@@ -182,7 +185,7 @@ resource "aws_subnet" "private_b" {
   map_public_ip_on_launch = false
 
   tags = merge(local.common_tags, {
-    Name                                          = "PrivateSubnet-${data.aws_availability_zones.available.names[1]}"
+    Name                                           = "PrivateSubnet-${data.aws_availability_zones.available.names[1]}"
     "kubernetes.io/cluster/${local.cluster_name}" = "shared"
     "kubernetes.io/role/internal-elb"             = "1"
   })
@@ -249,10 +252,10 @@ resource "aws_cognito_user_pool" "app" {
 
   password_policy {
     minimum_length                   = 8
-    require_lowercase                = true
-    require_numbers                  = true
-    require_symbols                  = false
-    require_uppercase                = true
+    require_lowercase                 = true
+    require_numbers                   = true
+    require_symbols                   = false
+    require_uppercase                 = true
     temporary_password_validity_days = 7
   }
 
@@ -275,7 +278,7 @@ resource "aws_cognito_user_pool_client" "web" {
   name         = "${local.app_name}-${local.environment}-web-client"
   user_pool_id = aws_cognito_user_pool.app.id
 
-  generate_secret                      = true
+  generate_secret      = true
   supported_identity_providers         = ["COGNITO"]
   allowed_oauth_flows_user_pool_client = true
   allowed_oauth_flows                  = ["code"]
@@ -425,6 +428,48 @@ resource "aws_eks_access_entry" "node_linux" {
   type          = "EC2_LINUX"
 }
 
+
+
+data "tls_certificate" "eks" {
+  url = aws_eks_cluster.app.identity[0].oidc[0].issuer
+}
+
+resource "aws_iam_openid_connect_provider" "eks" {
+  client_id_list  = ["sts.amazonaws.com"]
+  thumbprint_list = [data.tls_certificate.eks.certificates[0].sha1_fingerprint]
+  url             = aws_eks_cluster.app.identity[0].oidc[0].issuer
+}
+
+resource "aws_iam_role" "ebs_csi_driver" {
+  name = "${local.cluster_name}-ebs-csi-driver-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Principal = {
+          Federated = aws_iam_openid_connect_provider.eks.arn
+        }
+        Action = "sts:AssumeRoleWithWebIdentity"
+        Condition = {
+          StringEquals = {
+            "${replace(aws_iam_openid_connect_provider.eks.url, "https://", "")}:sub" = "system:serviceaccount:kube-system:ebs-csi-controller-sa",
+            "${replace(aws_iam_openid_connect_provider.eks.url, "https://", "")}:aud" = "sts.amazonaws.com"
+          }
+        }
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "ebs_csi_driver" {
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy"
+  role       = aws_iam_role.ebs_csi_driver.name
+}
+
+
+
 resource "aws_eks_addon" "vpc_cni" {
   cluster_name = aws_eks_cluster.app.name
   addon_name   = "vpc-cni"
@@ -433,11 +478,6 @@ resource "aws_eks_addon" "vpc_cni" {
 resource "aws_eks_addon" "kube_proxy" {
   cluster_name = aws_eks_cluster.app.name
   addon_name   = "kube-proxy"
-}
-
-resource "aws_eks_addon" "ebs_csi" {
-  cluster_name = aws_eks_cluster.app.name
-  addon_name   = "aws-ebs-csi-driver"
 }
 
 resource "aws_eks_node_group" "app" {
@@ -455,26 +495,30 @@ resource "aws_eks_node_group" "app" {
 
   depends_on = [
     aws_iam_role_policy_attachment.eks_node_role_policies,
-    aws_eks_access_entry.node_linux,
-    aws_eks_addon.vpc_cni,
-    aws_eks_addon.kube_proxy,
-    aws_eks_addon.ebs_csi
+    aws_eks_access_entry.node_linux
   ]
 
   tags = local.common_tags
 }
 
-# ==========================================
-# SECRETS MANAGEMENT FOR EXTERNAL SECRETS
-# ==========================================
+resource "aws_eks_addon" "ebs_csi" {
+  cluster_name             = aws_eks_cluster.app.name
+  addon_name               = "aws-ebs-csi-driver"
+  service_account_role_arn = aws_iam_role.ebs_csi_driver.arn
 
-# Maintain this to secure the database root user internally
+  depends_on = [
+    aws_eks_node_group.app,
+    aws_iam_role_policy_attachment.ebs_csi_driver
+  ]
+}
+
+
+
 resource "random_password" "db_root_password" {
   length  = 16
   special = false
 }
 
-# Create the AWS Secrets Manager Secret container
 resource "aws_secretsmanager_secret" "app_secrets" {
   name                    = "my-app/production-secrets"
   description             = "App and Database secrets provisioned by Terraform"
@@ -483,31 +527,26 @@ resource "aws_secretsmanager_secret" "app_secrets" {
   tags = local.common_tags
 }
 
-# Write the JSON payload that External Secrets Operator (ESO) will read
 resource "aws_secretsmanager_secret_version" "app_secrets_val" {
   secret_id = aws_secretsmanager_secret.app_secrets.id
   secret_string = jsonencode({
-    # --- NOW PULLING FROM GITHUB SECRETS (VIA TERRAFORM VARS) ---
     DB_USER               = var.db_user
     DB_PASSWORD           = var.db_pass
     SESSION_SECRET        = var.session_secret
     CLOUDFRONT_SECRET     = var.cloudfront_secret
 
-    # --- STILL HANDLED DYNAMICALLY BY TERRAFORM ---
     DB_NAME               = "mydb"
     DB_ROOT_PASSWORD      = random_password.db_root_password.result
     APP_BASE_URL          = "https://${aws_cloudfront_distribution.app.domain_name}"
     
-    COGNITO_DOMAIN        = "https://${aws_cognito_user_pool_domain.main.domain}.auth.${data.aws_region.current.name}.amazoncognito.com"
+    COGNITO_DOMAIN        = "https://${aws_cognito_user_pool_domain.main.domain}.auth.${data.aws_region.current.region}.amazoncognito.com"
     COGNITO_USER_POOL_ID  = aws_cognito_user_pool.app.id
     COGNITO_CLIENT_ID     = aws_cognito_user_pool_client.web.id
     COGNITO_CLIENT_SECRET = aws_cognito_user_pool_client.web.client_secret
   })
 }
 
-# ==========================================
-# OUTPUTS
-# ==========================================
+
 
 output "vpc_id" {
   value = aws_vpc.main.id
@@ -543,11 +582,11 @@ output "cognito_user_pool_client_secret" {
 }
 
 output "cognito_domain" {
-  value = "https://${aws_cognito_user_pool_domain.main.domain}.auth.${data.aws_region.current.name}.amazoncognito.com"
+  value = "https://${aws_cognito_user_pool_domain.main.domain}.auth.${data.aws_region.current.region}.amazoncognito.com"
 }
 
 output "cognito_login_url" {
-  value = "https://${aws_cognito_user_pool_domain.main.domain}.auth.${data.aws_region.current.name}.amazoncognito.com/login?client_id=${aws_cognito_user_pool_client.web.id}&response_type=code&scope=email+openid+profile&redirect_uri=${urlencode(local.cognito_callback_url)}"
+  value = "https://${aws_cognito_user_pool_domain.main.domain}.auth.${data.aws_region.current.region}.amazoncognito.com/login?client_id=${aws_cognito_user_pool_client.web.id}&response_type=code&scope=email+openid+profile&redirect_uri=${urlencode(local.cognito_callback_url)}"
 }
 
 output "cognito_callback_url" {
@@ -563,7 +602,7 @@ output "ecr_repository_url" {
 }
 
 output "aws_region" {
-  value = data.aws_region.current.name
+  value = data.aws_region.current.region
 }
 
 output "eks_subnet" {
