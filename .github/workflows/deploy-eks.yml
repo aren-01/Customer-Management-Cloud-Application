@@ -24,7 +24,6 @@ jobs:
       tf_state_bucket: ${{ steps.tfstate.outputs.bucket_name }}
       eks_cluster_name: ${{ steps.infra_outputs.outputs.eks_cluster_name }}
       cloudfront_distribution_id: ${{ steps.infra_outputs.outputs.cloudfront_distribution_id }}
-      # --- ADDED: Pass the new IAM Role ARN to the next jobs ---
       external_secrets_role_arn: ${{ steps.infra_outputs.outputs.external_secrets_role_arn }}
     steps:
       - name: Checkout repository
@@ -103,7 +102,6 @@ jobs:
         run: |
           set -euo pipefail
           
-          # This provisions your VPC, ECR, EKS Cluster, and AWS Secrets Manager!
           terraform apply -auto-approve
 
       - name: Read infrastructure outputs needed for image build and EKS
@@ -116,8 +114,6 @@ jobs:
           REGISTRY_URL=$(echo "$ECR_REPOSITORY_URL" | cut -d/ -f1)
           EKS_CLUSTER_NAME=$(terraform output -raw eks_cluster_name)
           CLOUDFRONT_DIST_ID=$(terraform output -raw cloudfront_distribution_id 2>/dev/null || echo "")
-          
-          # --- ADDED: Extract the IAM Role ARN ---
           EXT_SECRETS_ROLE_ARN=$(terraform output -raw external_secrets_role_arn 2>/dev/null || echo "")
 
           echo "aws_region=$(terraform output -raw aws_region)" >> "$GITHUB_OUTPUT"
@@ -208,7 +204,6 @@ jobs:
           CLUSTER_NAME: ${{ needs.deploy-infrastructure.outputs.eks_cluster_name }}
           ECR_REPOSITORY: ${{ needs.deploy-infrastructure.outputs.ecr_repository_url }}
           IMAGE_TAG: ${{ needs.build-and-push.outputs.image_tag }}
-          # --- ADDED: Make the ARN available to the script ---
           EXT_SECRETS_ROLE_ARN: ${{ needs.deploy-infrastructure.outputs.external_secrets_role_arn }}
         run: |
           set -euo pipefail
@@ -225,8 +220,12 @@ jobs:
             --set installCRDs=true \
             --wait
 
-          # 3. Deploy App Helm Chart (located at ./helm-chart)
-          # --- ADDED: --set serviceAccount.roleArn dynamically sets your annotation! ---
+          # 3. Wait for Kubernetes API server to establish discovery schemas for the new CRDs
+          echo "Waiting for External Secrets CRDs to be established..."
+          kubectl wait --for=condition=established --timeout=60s crd/externalsecrets.external-secrets.io
+          kubectl wait --for=condition=established --timeout=60s crd/secretstores.external-secrets.io
+
+          # 4. Deploy App Helm Chart (located at ./helm-chart)
           helm upgrade --install customer-management-app ./helm-chart \
             --namespace default \
             --create-namespace \
@@ -250,7 +249,7 @@ jobs:
           echo "Waiting for LoadBalancer hostname to become available..."
           LB_URL=""
           for i in {1..30}; do
-            LB_URL=$(kubectl get svc app-service -n default -o jsonpath='{.status.load_balancer.ingress[0].hostname}' 2>/dev/null || true)
+            LB_URL=$(kubectl get svc app-service -n default -o jsonpath='{.status.load_balancer.ingress[0].hostname}' 2>/devnull || true)
             if [ -n "$LB_URL" ]; then
               break
             fi
