@@ -222,6 +222,7 @@ jobs:
           helm upgrade --install external-secrets external-secrets/external-secrets \
             --namespace external-secrets \
             --create-namespace \
+            --set installCRDs=true \
             --wait
 
           # 3. Deploy App Helm Chart (located at ./helm-chart)
