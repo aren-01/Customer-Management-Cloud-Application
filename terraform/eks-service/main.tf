@@ -148,7 +148,7 @@ resource "aws_subnet" "public_a" {
   tags = merge(local.common_tags, {
     Name                                           = "PublicSubnet-${data.aws_availability_zones.available.names[0]}"
     "kubernetes.io/cluster/${local.cluster_name}" = "shared"
-    "kubernetes.io/role/elb"                      = "1"
+    "kubernetes.io/role/elb"                       = "1"
   })
 }
 
@@ -161,7 +161,7 @@ resource "aws_subnet" "public_b" {
   tags = merge(local.common_tags, {
     Name                                           = "PublicSubnet-${data.aws_availability_zones.available.names[1]}"
     "kubernetes.io/cluster/${local.cluster_name}" = "shared"
-    "kubernetes.io/role/elb"                      = "1"
+    "kubernetes.io/role/elb"                       = "1"
   })
 }
 
@@ -174,7 +174,7 @@ resource "aws_subnet" "private_a" {
   tags = merge(local.common_tags, {
     Name                                           = "PrivateSubnet-${data.aws_availability_zones.available.names[0]}"
     "kubernetes.io/cluster/${local.cluster_name}" = "shared"
-    "kubernetes.io/role/internal-elb"             = "1"
+    "kubernetes.io/role/internal-elb"              = "1"
   })
 }
 
@@ -187,7 +187,7 @@ resource "aws_subnet" "private_b" {
   tags = merge(local.common_tags, {
     Name                                           = "PrivateSubnet-${data.aws_availability_zones.available.names[1]}"
     "kubernetes.io/cluster/${local.cluster_name}" = "shared"
-    "kubernetes.io/role/internal-elb"             = "1"
+    "kubernetes.io/role/internal-elb"              = "1"
   })
 }
 
@@ -278,7 +278,7 @@ resource "aws_cognito_user_pool_client" "web" {
   name         = "${local.app_name}-${local.environment}-web-client"
   user_pool_id = aws_cognito_user_pool.app.id
 
-  generate_secret      = true
+  generate_secret                      = true
   supported_identity_providers         = ["COGNITO"]
   allowed_oauth_flows_user_pool_client = true
   allowed_oauth_flows                  = ["code"]
@@ -428,8 +428,6 @@ resource "aws_eks_access_entry" "node_linux" {
   type          = "EC2_LINUX"
 }
 
-
-
 data "tls_certificate" "eks" {
   url = aws_eks_cluster.app.identity[0].oidc[0].issuer
 }
@@ -467,8 +465,6 @@ resource "aws_iam_role_policy_attachment" "ebs_csi_driver" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy"
   role       = aws_iam_role.ebs_csi_driver.name
 }
-
-
 
 resource "aws_eks_addon" "vpc_cni" {
   cluster_name = aws_eks_cluster.app.name
@@ -512,8 +508,6 @@ resource "aws_eks_addon" "ebs_csi" {
   ]
 }
 
-
-
 resource "random_password" "db_root_password" {
   length  = 16
   special = false
@@ -546,7 +540,53 @@ resource "aws_secretsmanager_secret_version" "app_secrets_val" {
   })
 }
 
+# --- ADDED: EXTERNAL SECRETS OPERATOR IRSA ROLE & POLICY ---
 
+resource "aws_iam_role" "external_secrets" {
+  name = "${local.cluster_name}-external-secrets-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Principal = {
+          Federated = aws_iam_openid_connect_provider.eks.arn
+        }
+        Action = "sts:AssumeRoleWithWebIdentity"
+        Condition = {
+          StringEquals = {
+            "${replace(aws_iam_openid_connect_provider.eks.url, "https://", "")}:sub" = "system:serviceaccount:default:aws-secrets-sa",
+            "${replace(aws_iam_openid_connect_provider.eks.url, "https://", "")}:aud" = "sts.amazonaws.com"
+          }
+        }
+      }
+    ]
+  })
+
+  tags = local.common_tags
+}
+
+resource "aws_iam_role_policy" "external_secrets_policy" {
+  name = "SecretsManagerReadPolicy"
+  role = aws_iam_role.external_secrets.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = [
+          "secretsmanager:GetSecretValue",
+          "secretsmanager:DescribeSecret"
+        ]
+        Resource = aws_secretsmanager_secret.app_secrets.arn
+      }
+    ]
+  })
+}
+
+# --- OUTPUTS ---
 
 output "vpc_id" {
   value = aws_vpc.main.id
@@ -627,4 +667,8 @@ output "eks_cluster_role_arn" {
 
 output "eks_node_role_arn" {
   value = aws_iam_role.eks_node_role.arn
+}
+
+output "external_secrets_role_arn" {
+  value = aws_iam_role.external_secrets.arn
 }
