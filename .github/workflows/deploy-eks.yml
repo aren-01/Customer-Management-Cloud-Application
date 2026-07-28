@@ -246,10 +246,16 @@ jobs:
             exit 0
           fi
 
-          echo "Waiting for LoadBalancer hostname to become available..."
+          echo "Waiting for LoadBalancer hostname/IP to become available..."
           LB_URL=""
           for i in {1..30}; do
-            LB_URL=$(kubectl get svc app-service -n default -o jsonpath='{.status.load_balancer.ingress[0].hostname}' 2>/dev/null || true)
+            LB_URL=$(kubectl get svc app-service -n default -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
+            
+            # Fallback if AWS returns an IP address instead of a hostname
+            if [ -z "$LB_URL" ]; then
+              LB_URL=$(kubectl get svc app-service -n default -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
+            fi
+
             if [ -n "$LB_URL" ]; then
               break
             fi
@@ -259,6 +265,8 @@ jobs:
 
           if [ -z "$LB_URL" ]; then
             echo "Error: Timed out waiting for LoadBalancer URL."
+            echo "Debugging info:"
+            kubectl get svc app-service -n default -o yaml || true
             exit 1
           fi
 
