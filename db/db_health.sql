@@ -1,16 +1,6 @@
--- phpMyAdmin SQL Dump
--- version 5.2.0
--- https://www.phpmyadmin.net/
---
--- Host: 127.0.0.1:3306
--- Generation Time: Oct 06, 2025 at 02:12 AM
--- Server version: 8.0.31
--- PHP Version: 8.0.26
-
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
 START TRANSACTION;
 SET time_zone = "+00:00";
-
 
 /*!40101 SET @OLD_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT */;
 /*!40101 SET @OLD_CHARACTER_SET_RESULTS=@@CHARACTER_SET_RESULTS */;
@@ -20,68 +10,8 @@ SET time_zone = "+00:00";
 --
 -- Database: `db_health`
 --
-
--- --------------------------------------------------------
-
---
--- Table structure for table `appointments`
---
-
-DROP TABLE IF EXISTS `appointments`;
-CREATE TABLE IF NOT EXISTS `appointments` (
-  `aid` int NOT NULL AUTO_INCREMENT,
-  `cid` int NOT NULL,
-  `date` date NOT NULL,
-  `status` enum('upcoming','successful','unsuccessful','canceled') CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
-  `payment` enum('successful','unsuccessful','pending','canceled') NOT NULL,
-  PRIMARY KEY (`aid`)
-) ENGINE=InnoDB AUTO_INCREMENT=41 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
-
---
--- Dumping data for table `appointments`
---
-
-INSERT INTO `appointments` (`aid`, `cid`, `date`, `status`, `payment`) VALUES
-(1, 1, '2025-10-01', 'successful', 'successful'),
-(2, 1, '2025-10-18', 'upcoming', 'unsuccessful'),
-(3, 2, '2025-10-03', 'unsuccessful', 'unsuccessful'),
-(4, 4, '2025-10-14', 'successful', 'successful'),
-(5, 3, '2025-10-23', 'upcoming', 'successful'),
-(6, 47, '2025-09-12', 'upcoming', 'successful'),
-(7, 3, '2025-12-01', 'upcoming', 'unsuccessful'),
-(8, 22, '2025-11-20', 'upcoming', 'successful'),
-(9, 58, '2025-12-15', 'upcoming', 'unsuccessful'),
-(10, 9, '2025-11-02', 'upcoming', 'unsuccessful'),
-(11, 41, '2025-11-25', 'canceled', 'unsuccessful'),
-(12, 14, '2025-12-05', 'upcoming', 'unsuccessful'),
-(13, 36, '2025-10-05', 'canceled', 'successful'),
-(14, 7, '2025-10-21', 'upcoming', 'unsuccessful'),
-(15, 60, '2025-11-11', 'upcoming', 'successful'),
-(16, 5, '2025-12-20', 'upcoming', 'unsuccessful'),
-(17, 28, '2025-11-30', 'upcoming', 'successful'),
-(18, 51, '2025-10-25', 'canceled', 'unsuccessful'),
-(19, 17, '2026-01-10', 'upcoming', 'unsuccessful'),
-(20, 43, '2025-09-30', 'successful', 'successful'),
-(21, 2, '2026-02-05', 'canceled', 'unsuccessful'),
-(22, 33, '2025-11-03', 'upcoming', 'successful'),
-(23, 19, '2025-10-29', 'upcoming', 'successful'),
-(24, 8, '2025-12-09', 'upcoming', 'successful'),
-(25, 39, '2025-11-17', 'canceled', 'unsuccessful'),
-(26, 26, '2025-12-22', 'upcoming', 'successful'),
-(27, 54, '2026-01-20', 'successful', 'successful'),
-(28, 11, '2025-10-11', 'upcoming', 'unsuccessful'),
-(29, 30, '2025-11-08', 'upcoming', 'unsuccessful'),
-(30, 15, '2025-12-03', '', 'successful'),
-(31, 49, '2025-11-15', 'unsuccessful', 'unsuccessful'),
-(32, 6, '2026-02-01', 'upcoming', 'unsuccessful'),
-(33, 38, '2025-09-20', 'successful', 'successful'),
-(34, 24, '2025-11-27', 'upcoming', 'unsuccessful'),
-(35, 12, '2025-10-30', 'canceled', 'successful'),
-(36, 56, '2025-12-12', 'canceled', 'unsuccessful'),
-(37, 4, '2025-11-02', 'upcoming', 'unsuccessful'),
-(38, 18, '2025-10-07', 'successful', 'successful'),
-(39, 21, '2026-01-18', 'successful', 'successful'),
-(40, 37, '2025-12-28', 'canceled', 'unsuccessful');
+CREATE DATABASE IF NOT EXISTS `db_health`;
+USE `db_health`;
 
 -- --------------------------------------------------------
 
@@ -173,6 +103,71 @@ INSERT INTO `customers` (`cid`, `name`, `email`, `phone`, `address`, `insurance`
 (66, 'Ella Rogers', 'ella58@ella58.com', '+14436668877', '6782 Laurel Hill Rd, Frederick, MD 21703', 'verified'),
 (67, 'Jack Turner', 'jack59@jack59.com', '+14432223311', '8038 Birchwood Rd, Columbia, MD 21044', 'verified'),
 (68, 'Sofia Collins', 'sofia60@sofia60.com', '+14439994422', '2951 Oak Grove Dr, Towson, MD 21204', 'verified');
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `appointments`
+--
+
+DROP TABLE IF EXISTS `appointments`;
+CREATE TABLE IF NOT EXISTS `appointments` (
+  `aid` int NOT NULL AUTO_INCREMENT,
+  `cid` int NOT NULL,
+  `date` date NOT NULL,
+  `status` enum('upcoming','successful','unsuccessful','canceled') CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
+  `payment` enum('successful','unsuccessful','pending','canceled') NOT NULL,
+  PRIMARY KEY (`aid`),
+  KEY `cid` (`cid`),
+  CONSTRAINT `fk_appointments_customers` FOREIGN KEY (`cid`) REFERENCES `customers` (`cid`) ON DELETE CASCADE
+) ENGINE=InnoDB AUTO_INCREMENT=41 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+--
+-- Dumping data for table `appointments`
+--
+
+INSERT INTO `appointments` (`aid`, `cid`, `date`, `status`, `payment`) VALUES
+(1, 1, '2025-10-01', 'successful', 'successful'),
+(2, 1, '2025-10-18', 'upcoming', 'unsuccessful'),
+(3, 2, '2025-10-03', 'unsuccessful', 'unsuccessful'),
+(4, 4, '2025-10-14', 'successful', 'successful'),
+(5, 3, '2025-10-23', 'upcoming', 'successful'),
+(6, 47, '2025-09-12', 'upcoming', 'successful'),
+(7, 3, '2025-12-01', 'upcoming', 'unsuccessful'),
+(8, 22, '2025-11-20', 'upcoming', 'successful'),
+(9, 58, '2025-12-15', 'upcoming', 'unsuccessful'),
+(10, 9, '2025-11-02', 'upcoming', 'unsuccessful'),
+(11, 41, '2025-11-25', 'canceled', 'unsuccessful'),
+(12, 14, '2025-12-05', 'upcoming', 'unsuccessful'),
+(13, 36, '2025-10-05', 'canceled', 'successful'),
+(14, 7, '2025-10-21', 'upcoming', 'unsuccessful'),
+(15, 60, '2025-11-11', 'upcoming', 'successful'),
+(16, 5, '2025-12-20', 'upcoming', 'unsuccessful'),
+(17, 28, '2025-11-30', 'upcoming', 'successful'),
+(18, 51, '2025-10-25', 'canceled', 'unsuccessful'),
+(19, 17, '2026-01-10', 'upcoming', 'unsuccessful'),
+(20, 43, '2025-09-30', 'successful', 'successful'),
+(21, 2, '2026-02-05', 'canceled', 'unsuccessful'),
+(22, 33, '2025-11-03', 'upcoming', 'successful'),
+(23, 19, '2025-10-29', 'upcoming', 'successful'),
+(24, 8, '2025-12-09', 'upcoming', 'successful'),
+(25, 39, '2025-11-17', 'canceled', 'unsuccessful'),
+(26, 26, '2025-12-22', 'upcoming', 'successful'),
+(27, 54, '2026-01-20', 'successful', 'successful'),
+(28, 11, '2025-10-11', 'upcoming', 'unsuccessful'),
+(29, 30, '2025-11-08', 'upcoming', 'unsuccessful'),
+(30, 15, '2025-12-03', 'upcoming', 'successful'),
+(31, 49, '2025-11-15', 'unsuccessful', 'unsuccessful'),
+(32, 6, '2026-02-01', 'upcoming', 'unsuccessful'),
+(33, 38, '2025-09-20', 'successful', 'successful'),
+(34, 24, '2025-11-27', 'upcoming', 'unsuccessful'),
+(35, 12, '2025-10-30', 'canceled', 'successful'),
+(36, 56, '2025-12-12', 'canceled', 'unsuccessful'),
+(37, 4, '2025-11-02', 'upcoming', 'unsuccessful'),
+(38, 18, '2025-10-07', 'successful', 'successful'),
+(39, 21, '2026-01-18', 'successful', 'successful'),
+(40, 37, '2025-12-28', 'canceled', 'unsuccessful');
+
 COMMIT;
 
 /*!40101 SET CHARACTER_SET_CLIENT=@OLD_CHARACTER_SET_CLIENT */;
