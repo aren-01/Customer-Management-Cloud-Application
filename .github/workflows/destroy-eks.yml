@@ -70,12 +70,15 @@ jobs:
               kubectl delete svc --all -n default || true
               kubectl delete pvc --all -n default || true
               kubectl delete ns external-secrets || true
+              
+              echo "Waiting 60 seconds for AWS to physically delete EBS volumes and LoadBalancers..."
+              sleep 60
             fi
           else
             echo "EKS cluster not found in state, skipping Kubernetes resource cleanup."
           fi
 
-     
+      
       - name: Terraform Destroy
         working-directory: terraform/eks-service
         env:
@@ -87,7 +90,7 @@ jobs:
           set -euo pipefail
           terraform destroy -auto-approve
 
-    
+     
       - name: Force Delete Secrets Manager Secret
         run: |
           set -euo pipefail
