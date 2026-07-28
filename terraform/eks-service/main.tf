@@ -526,7 +526,7 @@ resource "aws_secretsmanager_secret_version" "app_secrets_val" {
     SESSION_SECRET        = var.session_secret
     CLOUDFRONT_SECRET     = var.cloudfront_secret
 
-    DB_NAME               = "mydb"
+    DB_NAME               = "db_health"
     DB_ROOT_PASSWORD      = random_password.db_root_password.result
     APP_BASE_URL          = "https://${aws_cloudfront_distribution.app.domain_name}"
     
