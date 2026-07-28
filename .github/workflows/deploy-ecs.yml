@@ -1,0 +1,10 @@
+name: Deploy Customer Management App with ECS
+
+on:
+  workflow_dispatch:
+
+jobs:
+  placeholder-job:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "This is a placeholder so GitHub shows the Run button!"
