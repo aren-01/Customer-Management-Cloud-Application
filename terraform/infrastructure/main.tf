@@ -42,7 +42,7 @@ locals {
   health_check_path = "/health"
 
   db_engine   = "mysql"
-  db_name     = "healthcaredb"
+  db_name     = "db_health"
   db_username = "admin"
   db_port     = 3306
 
