@@ -481,7 +481,7 @@ resource "aws_launch_template" "app_nodes" {
     device_name = "/dev/xvda"
 
     ebs {
-      volume_size           = 4 # Minimum valid AWS EKS root volume size in GiB
+      volume_size           = 20 # Minimum valid AWS EKS root volume size in GiB
       volume_type           = "gp3"
       delete_on_termination = true
     }
