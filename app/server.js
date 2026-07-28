@@ -67,12 +67,26 @@ const db = mysql.createPool({
   queueLimit: 0,
 });
 
+// Explicitly create the sessions table to prevent express-mysql-session race conditions
+db.execute(`
+  CREATE TABLE IF NOT EXISTS \`sessions\` (
+    \`session_id\` varchar(128) COLLATE utf8mb4_bin NOT NULL,
+    \`expires\` int(11) unsigned NOT NULL,
+    \`data\` mediumtext COLLATE utf8mb4_bin,
+    PRIMARY KEY (\`session_id\`)
+  ) ENGINE=InnoDB;
+`).then(() => {
+  console.log("Sessions table is ready.");
+}).catch((err) => {
+  console.error("Failed to create sessions table:", err);
+});
+
 // <-- ADDED: Create the Session Store using the DB pool above
 const sessionStore = new MySQLStore({
   clearExpired: true,
   checkExpirationInterval: 900000, // Clear expired sessions every 15 minutes
   expiration: 3600000,             // Session valid for 1 hour
-  createDatabaseTable: true,       // Automatically creates the 'sessions' table
+  createDatabaseTable: false,      // <-- CHANGED TO FALSE to avoid race conditions
 }, db);
 
 // Setup
