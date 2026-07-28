@@ -225,6 +225,14 @@ jobs:
           kubectl wait --for=condition=established --timeout=60s crd/externalsecrets.external-secrets.io
           kubectl wait --for=condition=established --timeout=60s crd/secretstores.external-secrets.io
 
+          # 👉 THE FIX: Delete old DB volume and copy the db folder so Helm can read it
+          echo "Deleting old MySQL deployment and PVC to force clean initialization..."
+          kubectl delete deployment mysql-deployment -n default --ignore-not-found=true
+          kubectl delete pvc mysql -n default --ignore-not-found=true
+          
+          echo "Copying db directory to helm-chart/db..."
+          cp -r ./db ./helm-chart/db
+
           # 4. Deploy App Helm Chart (located at ./helm-chart)
           helm upgrade --install customer-management-app ./helm-chart \
             --namespace default \
