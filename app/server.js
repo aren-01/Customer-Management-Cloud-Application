@@ -4,6 +4,7 @@ const express = require("express");
 const mysql = require("mysql2/promise");
 const path = require("path");
 const session = require("express-session");
+const MySQLStore = require("express-mysql-session")(session); // <-- ADDED: Import MySQL Store
 const { createRemoteJWKSet, jwtVerify } = require("jose");
 
 const app = express();
@@ -41,9 +42,8 @@ const COGNITO_JWKS = createRemoteJWKSet(new URL(`${COGNITO_ISSUER}/.well-known/j
 const CLOUDFRONT_SECRET = process.env.CLOUDFRONT_SECRET; // Grab secret from ENV
 
 // Trust CloudFront/ALB proxy headers.
-
-app.set("trust proxy", true);
-
+// UPDATED: Set to 1 (best practice for expressing trust in the first proxy)
+app.set("trust proxy", 1);
 
 app.use((req, res, next) => {
   req.headers["x-forwarded-proto"] = "https";
@@ -67,6 +67,14 @@ const db = mysql.createPool({
   queueLimit: 0,
 });
 
+// <-- ADDED: Create the Session Store using the DB pool above
+const sessionStore = new MySQLStore({
+  clearExpired: true,
+  checkExpirationInterval: 900000, // Clear expired sessions every 15 minutes
+  expiration: 3600000,             // Session valid for 1 hour
+  createDatabaseTable: true,       // Automatically creates the 'sessions' table
+}, db);
+
 // Setup
 app.set("view engine", "ejs");
 app.set("views", path.join(__dirname, "views"));
@@ -79,12 +87,13 @@ app.use(
   session({
     name: process.env.SESSION_COOKIE_NAME || "customerapp.sid",
     secret: process.env.SESSION_SECRET,
+    store: sessionStore, // <-- ADDED: Tell express to save sessions in MySQL
     resave: false,
     saveUninitialized: false,
     cookie: {
       httpOnly: true,
       sameSite: "lax",
-      secure: process.env.SESSION_COOKIE_SECURE === "true",
+      secure: process.env.SESSION_COOKIE_SECURE === "true" || process.env.NODE_ENV === "production",
       maxAge: 60 * 60 * 1000,
     },
   })
