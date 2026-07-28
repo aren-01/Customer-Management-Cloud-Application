@@ -473,12 +473,34 @@ resource "aws_eks_addon" "kube_proxy" {
   addon_name   = "kube-proxy"
 }
 
+# --- LAUNCH TEMPLATE FOR CUSTOM EBS NODE DISK SIZE ---
+resource "aws_launch_template" "app_nodes" {
+  name_prefix = "db-and-app-nodes-"
+
+  block_device_mappings {
+    device_name = "/dev/xvda"
+
+    ebs {
+      volume_size           = 4 # Minimum valid AWS EKS root volume size in GiB
+      volume_type           = "gp3"
+      delete_on_termination = true
+    }
+  }
+
+  tags = local.common_tags
+}
+
 resource "aws_eks_node_group" "app" {
   cluster_name    = aws_eks_cluster.app.name
   node_group_name = "db-and-app"
   node_role_arn   = aws_iam_role.eks_node_role.arn
   subnet_ids      = [aws_subnet.public_a.id, aws_subnet.public_b.id]
   instance_types  = ["t3.small"]
+
+  launch_template {
+    id      = aws_launch_template.app_nodes.id
+    version = aws_launch_template.app_nodes.latest_version
+  }
 
   scaling_config {
     desired_size = 4
@@ -521,14 +543,14 @@ resource "aws_secretsmanager_secret" "app_secrets" {
 resource "aws_secretsmanager_secret_version" "app_secrets_val" {
   secret_id = aws_secretsmanager_secret.app_secrets.id
   secret_string = jsonencode({
-    DB_USER               = var.db_user
-    DB_PASSWORD           = var.db_pass
-    SESSION_SECRET        = var.session_secret
-    CLOUDFRONT_SECRET     = var.cloudfront_secret
+    DB_USER           = var.db_user
+    DB_PASSWORD       = var.db_pass
+    SESSION_SECRET    = var.session_secret
+    CLOUDFRONT_SECRET = var.cloudfront_secret
 
-    DB_NAME               = "db_health"
-    DB_ROOT_PASSWORD      = random_password.db_root_password.result
-    APP_BASE_URL          = "https://${aws_cloudfront_distribution.app.domain_name}"
+    DB_NAME           = "db_health"
+    DB_ROOT_PASSWORD  = random_password.db_root_password.result
+    APP_BASE_URL      = "https://${aws_cloudfront_distribution.app.domain_name}"
     
     COGNITO_DOMAIN        = "https://${aws_cognito_user_pool_domain.main.domain}.auth.${data.aws_region.current.region}.amazoncognito.com"
     COGNITO_USER_POOL_ID  = aws_cognito_user_pool.app.id
