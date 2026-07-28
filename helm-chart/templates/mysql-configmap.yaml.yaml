@@ -1,7 +1,0 @@
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: mysql-init-script
-data:
-  init.sql: |-
-{{ .Files.Get "db/db_health.sql" | indent 4 }}
