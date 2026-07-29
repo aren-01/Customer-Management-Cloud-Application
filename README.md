@@ -20,9 +20,11 @@ region, the on-premises server can connect to another region via AWS
 Transit Gateway.
 
 
-## Actual Deployment for This Version
+## Actual Deployment for ECS Version
 
 ![](./images/image-2.jpg)
+
+## Actual Deployment for EKS Version
 
 
 In this project, I focused on the system shown above. This is a
@@ -41,7 +43,7 @@ I also deployed a GitHub [destroy.yml](.github/workflows/destroy.yml) file to to
 5. Installs the infrastructure above through Terraform
 6. Installs the DB into the RDS instance with a temporary EC2 instance
 
-Please see the [cloudformation.yml](optional/cloudformation.yml) file if you prefer manual deployment of the VPC infrastructure.
+Please see the [cloudformation.yml](optional/cloudformation.yml) file if you prefer manual deployment of the VPC infrastructure with ECS. Please note that this automates a deployment for an old version. It is not the recent version of my project.
 
 You need to configure the GitHub permissions using the least privilege principle when setting up your integration on AWS.
 Always follow the principle of least privilege to authorize GitHub.
