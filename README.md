@@ -26,7 +26,7 @@ Transit Gateway.
 
 ## Actual Deployment for EKS Version
 
-![](./images/image9.jpg)
+![](./images/image10.jpg)
 
 In this project, I focused on the systems shown above. This is a
 simplified version of the first architecture, and it includes an
@@ -35,16 +35,16 @@ temporary EC2 instance in the ECS Version, used only to import the SQL file into
 
 I also deployed a GitHub files to totally destroy the system with terraform state S3 Bucket. The deploy workflow creates an S3 bucket to store the Terraform state.
 
-[deploy.yml](.github/workflows/deploy.yml):
+[deploy-eks.yml](.github/workflows/deploy-eks.yml) and [deploy-ecs.yml](.github/workflows/deploy-ecs.yml):
 
-1. Creates a S3 Bucket to store Terraform state 
-2. Creates an ECR repo
-3. Containerizes the application through Docker
-4. Pushes the container
-5. Installs the infrastructure above through Terraform
-6. Installs the DB into the RDS instance with a temporary EC2 instance
+1. Create a S3 Bucket to store Terraform state 
+2. Create an ECR repo
+3. Containerize the application through Docker
+4. Push the container
+5. Install the infrastructures above through Terraform using ECS or EKS based on your choice
+6. Install the DB into the RDS instance with a temporary EC2 instance
 
-Please see the [cloudformation.yml](optional/cloudformation.yml) file if you prefer manual deployment of the VPC infrastructure with ECS. Please note that this automates a deployment for an old version. It is not the recent version of my project.
+Please see the [cloudformation.yml](optional/cloudformation.yml) file if you prefer manual deployment of the VPC infrastructure with ECS. Please note that this automates a deployment for an old version, not the recent version of my project.
 
 You need to configure the GitHub permissions using the least privilege principle when setting up your integration on AWS.
 Always follow the principle of least privilege to authorize GitHub.
@@ -65,15 +65,20 @@ This system can work on AWS Free Tier accounts.
 
 `SESSION_SECRET`
 
+Please also fill the secrets below instead of DB_PASSWORD, if you deploy the EKS version: 
+
+`DB_USER`
+
+`DB_PASS`
+
 4. Start the deployment in the actions tab.
 5. After deployment, manually create a Congito user to log into the system through CloudFront.
-6. In case you prefer to remove the entire system, in the actions tab, use `Destroy the all deployment`
+6. In case you prefer to remove the entire system, in the actions tab, use `Destroy the all deployment` based on the version you installed.
 
-IMPORTANT NOTE: Since ALB domain does not work with ACM to use an SSL certificate, I used CloudFront and Public ECS tasks in the system to integrate Cognito. In a real production environment keep ECS tasks in a private subnet with a custom domain.
+IMPORTANT NOTE ON CONTAINERS IN PUBLIC SUBNETS: Since ALB domain does not work with ACM to use an SSL certificate and I deploy it on AWS Free Tier without a domain, I used CloudFront and Public ECS tasks in the system to integrate Cognito. Otherwise, even if this is deployed in CloudFront, Cognito receives the url in ALB; therefore it fails. Because of this issue, I used public subnets. In a real production environment keep ECS and EKS tasks in a private subnet with a custom domain.
 
 ## Status Badge
-[![Deploy Customer Management App](https://github.com/aren-01/Customer-Management-Cloud-Application/actions/workflows/deploy.yml/badge.svg)](https://github.com/aren-01/Customer-Management-Cloud-Application/actions/workflows/deploy.yml)
-[![Destroy the deployment](https://github.com/aren-01/Customer-Management-Cloud-Application/actions/workflows/destroy.yml/badge.svg)](https://github.com/aren-01/Customer-Management-Cloud-Application/actions/workflows/destroy.yml)
+
 
 ## Screenshots
 
