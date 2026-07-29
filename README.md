@@ -26,6 +26,7 @@ Transit Gateway.
 
 ## Actual Deployment for EKS Version
 
+![](./images/image9.jpg)
 
 In this project, I focused on the system shown above. This is a
 simplified version of the first architecture, and it includes an
