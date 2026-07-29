@@ -12,6 +12,7 @@ env:
   COMPOSE_PROJECT_NAME: app
   LOCAL_IMAGE_NAME: app-app:latest
   TF_STATE_BUCKET: cma02-tfstate-${{ github.repository_owner }}
+  ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
 
 jobs:
   
