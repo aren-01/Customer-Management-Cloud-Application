@@ -28,12 +28,12 @@ Transit Gateway.
 
 ![](./images/image9.jpg)
 
-In this project, I focused on the system shown above. This is a
+In this project, I focused on the systems shown above. This is a
 simplified version of the first architecture, and it includes an
 Internet Gateway (IGW). In practice, I used Cognito user authorization and CloudFront instead of Site-to-Site VPN to deploy the JS app. There is one
-temporary EC2 instance, used only to import the SQL file into RDS.
+temporary EC2 instance in the ECS Version, used only to import the SQL file into RDS.
 
-I also deployed a GitHub [destroy.yml](.github/workflows/destroy.yml) file to totally destroy the system with terraform state S3 Bucket. The deploy workflow creates an S3 bucket to store the Terraform state.
+I also deployed a GitHub files to totally destroy the system with terraform state S3 Bucket. The deploy workflow creates an S3 bucket to store the Terraform state.
 
 [deploy.yml](.github/workflows/deploy.yml):
 
