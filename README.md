@@ -26,7 +26,7 @@ Transit Gateway.
 
 ## Actual Deployment for EKS Version
 
-![](./images/image10.jpg)
+![](./images/image12.jpg)
 
 In the EKS version, I used a helm chart to automate the system and deployment. I used four EC2 nodes with t3.small configuration and in these four instances four replicas of the app deployment and one mysql deployment are supposed to run. To overcome the session issue among the pods I stored login information in an express MySQL session. Please review the [helm chart folder](helm-chart) for more details.
 
