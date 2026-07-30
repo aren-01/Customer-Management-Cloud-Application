@@ -28,6 +28,8 @@ Transit Gateway.
 
 ![](./images/image10.jpg)
 
+In the EKS version, I used a helm chart to automate the system and deployment. I used four EC2 nodes with t3.small configuration and in these four instances four replicas of the app deployment and one mysql deployment are supposed to run. To overcome the session issue among the pods I stored login information in an express MySQL session. Please review the [helm chart folder](helm-chart) for more details.
+
 In this project, I focused on the systems shown above. This is a
 simplified version of the first architecture, and it includes an
 Internet Gateway (IGW). In practice, I used Cognito user authorization and CloudFront instead of Site-to-Site VPN to deploy the JS app. There is one
@@ -47,7 +49,7 @@ I also deployed a GitHub files to totally destroy the system with terraform stat
 Please see the [cloudformation.yml](optional/cloudformation.yml) file if you prefer manual deployment of the VPC infrastructure with ECS. Please note that this automates a deployment for an old version, not the recent version of my project.
 
 You need to configure the GitHub permissions using the least privilege principle when setting up your integration on AWS.
-Always follow the principle of least privilege to authorize GitHub.
+Always follow the principle of least privilege to authorize GitHub. To apply least privilege principles, please review the [least privilege folder](least-privilege) and update resource sections. 
 
 ## How to Deploy?
 
