@@ -88,5 +88,6 @@ IMPORTANT NOTE ON CONTAINERS IN PUBLIC SUBNETS: Since ALB domain does not work w
 ![](./images/image6.png)
 ![](./images/image7.png)
 ![](./images/image8.png)
+![](./images/image11.png)
 
 
