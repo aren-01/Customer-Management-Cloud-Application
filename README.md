@@ -82,6 +82,9 @@ IMPORTANT NOTE ON CONTAINERS IN PUBLIC SUBNETS: Since ALB domain does not work w
 ## Status Badges
 [![Deploy Customer Management App with Kubernetes](https://github.com/aren-01/Customer-Management-Cloud-Application/actions/workflows/deploy-eks.yml/badge.svg)](https://github.com/aren-01/Customer-Management-Cloud-Application/actions/workflows/deploy-eks.yml)
 [![Destroy Customer Management Infrastructure – EKS Version](https://github.com/aren-01/Customer-Management-Cloud-Application/actions/workflows/destroy-eks.yml/badge.svg)](https://github.com/aren-01/Customer-Management-Cloud-Application/actions/workflows/destroy-eks.yml)
+
+[![Deploy Customer Management App with ECS](https://github.com/aren-01/Customer-Management-Cloud-Application/actions/workflows/deploy-ecs.yml/badge.svg)](https://github.com/aren-01/Customer-Management-Cloud-Application/actions/workflows/deploy-ecs.yml)
+[![Destroy the deployment – ECS Version](https://github.com/aren-01/Customer-Management-Cloud-Application/actions/workflows/destroy-ecs.yml/badge.svg)](https://github.com/aren-01/Customer-Management-Cloud-Application/actions/workflows/destroy-ecs.yml)
 ## Screenshots
 
 ![](./images/image5.png)
