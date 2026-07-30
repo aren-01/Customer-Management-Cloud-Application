@@ -1,3 +1,4 @@
+
 name: Deploy Customer Management App with ECS
 
 on:
@@ -546,3 +547,4 @@ jobs:
             -var="rds_security_group_id=${RDS_SECURITY_GROUP_ID}" \
             -var="db_secret_arn=${DB_SECRET_ARN}" \
             -var="db_import_ami_id=${DB_IMPORT_AMI_ID}"
+

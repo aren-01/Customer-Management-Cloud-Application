@@ -3,6 +3,7 @@ name: Deploy Customer Management App with Kubernetes
 on:
   workflow_dispatch:
 
+
 permissions:
   id-token: write
   contents: read
@@ -291,3 +292,4 @@ jobs:
             --if-match "$ETAG"
 
           echo "Successfully updated CloudFront origin domain to: $LB_URL"
+

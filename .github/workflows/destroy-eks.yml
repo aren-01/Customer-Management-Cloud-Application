@@ -3,6 +3,7 @@ name: Destroy Customer Management Infrastructure – EKS Version
 on:
   workflow_dispatch:
 
+
 permissions:
   id-token: write
   contents: read
@@ -132,3 +133,5 @@ jobs:
           else
             echo "S3 state bucket $BUCKET_NAME does not exist. Skipping."
           fi
+
+

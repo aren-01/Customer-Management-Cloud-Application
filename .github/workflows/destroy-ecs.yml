@@ -1,4 +1,5 @@
 name: Destroy the deployment – ECS Version
+
  
 on:
   workflow_dispatch:
@@ -440,3 +441,4 @@ jobs:
             --region "$AWS_REGION"
 
           echo "Terraform state bucket deleted: $BUCKET_NAME"
+
