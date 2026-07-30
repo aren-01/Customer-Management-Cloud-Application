@@ -1,0 +1,27 @@
+app:
+  replicas: 4
+  image:
+    repository: ""  
+    tag: ""         
+    pullPolicy: IfNotPresent
+  service:
+    type: LoadBalancer
+    port: 80
+    targetPort: 3000
+
+database:
+  serviceName: "db-service"
+  port: 3306
+  targetPort: 3306
+  pvc:
+    name: "mysql"
+    accessMode: "ReadWriteOnce"
+    storageClassName: "ebs-sc"
+    storageSize: "8Gi"
+  secret:
+    name: "db-my"  
+
+serviceAccount:
+  create: true
+  name: "aws-secrets-sa"
+  roleArn: "" 

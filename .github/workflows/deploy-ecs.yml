@@ -1,10 +1,550 @@
+
 name: Deploy Customer Management App with ECS
 
 on:
   workflow_dispatch:
 
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  COMPOSE_PROJECT_NAME: app
+  LOCAL_IMAGE_NAME: app-app:latest
+  DB_SQL_FILE: db/db_health.sql
+  TF_STATE_BUCKET: cma02-tfstate-${{ github.repository_owner }}
+
 jobs:
-  placeholder-job:
+  deploy-infrastructure:
     runs-on: ubuntu-latest
+
+    outputs:
+      aws_region: ${{ steps.infra_outputs.outputs.aws_region }}
+      ecr_repository_url: ${{ steps.infra_outputs.outputs.ecr_repository_url }}
+      registry_url: ${{ steps.infra_outputs.outputs.registry_url }}
+      tf_state_bucket: ${{ steps.tfstate.outputs.bucket_name }}
+
     steps:
-      - run: echo "This is a placeholder so GitHub shows the Run button!"
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Create Terraform state bucket if it does not exist
+        id: tfstate
+        run: |
+          set -euo pipefail
+
+          BUCKET_NAME=$(echo "${TF_STATE_BUCKET}" | tr '[:upper:]' '[:lower:]' | tr '_' '-')
+
+          echo "Using Terraform state bucket: $BUCKET_NAME"
+          echo "bucket_name=$BUCKET_NAME" >> "$GITHUB_OUTPUT"
+
+          if aws s3api head-bucket --bucket "$BUCKET_NAME" 2>/dev/null; then
+            echo "Terraform state bucket already exists."
+          else
+            echo "Creating Terraform state bucket..."
+
+            aws s3api create-bucket \
+              --bucket "$BUCKET_NAME" \
+              --region "${AWS_REGION}"
+
+            aws s3api put-bucket-versioning \
+              --bucket "$BUCKET_NAME" \
+              --versioning-configuration Status=Enabled
+
+            aws s3api put-public-access-block \
+              --bucket "$BUCKET_NAME" \
+              --public-access-block-configuration \
+              BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+
+            aws s3api put-bucket-encryption \
+              --bucket "$BUCKET_NAME" \
+              --server-side-encryption-configuration '{
+                "Rules": [
+                  {
+                    "ApplyServerSideEncryptionByDefault": {
+                      "SSEAlgorithm": "AES256"
+                    }
+                  }
+                ]
+              }'
+          fi
+
+      - name: Terraform apply infrastructure
+        working-directory: terraform/infrastructure
+        env:
+          TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
+          TF_VAR_cloudfront_secret: ${{ secrets.CLOUDFRONT_SECRET }}
+        run: |
+          set -euo pipefail
+
+          terraform init \
+            -backend-config="bucket=${{ steps.tfstate.outputs.bucket_name }}" \
+            -backend-config="key=customermanagementapp/infrastructure/terraform.tfstate" \
+            -backend-config="region=${{ env.AWS_REGION }}" \
+            -backend-config="use_lockfile=true"
+
+          terraform apply -auto-approve
+
+      - name: Read infrastructure outputs needed for image build
+        id: infra_outputs
+        working-directory: terraform/infrastructure
+        run: |
+          set -euo pipefail
+
+          ECR_REPOSITORY_URL=$(terraform output -raw ecr_repository_url)
+          REGISTRY_URL=$(echo "$ECR_REPOSITORY_URL" | cut -d/ -f1)
+
+          echo "aws_region=$(terraform output -raw aws_region)" >> "$GITHUB_OUTPUT"
+          echo "ecr_repository_url=$ECR_REPOSITORY_URL" >> "$GITHUB_OUTPUT"
+          echo "registry_url=$REGISTRY_URL" >> "$GITHUB_OUTPUT"
+
+  build-and-push:
+    runs-on: ubuntu-latest
+    needs: deploy-infrastructure
+
+    outputs:
+      image_tag: ${{ steps.image.outputs.image_tag }}
+      image_uri: ${{ steps.image.outputs.image_uri }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ needs.deploy-infrastructure.outputs.aws_region }}
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+
+      - name: Login to Amazon ECR
+        run: |
+          set -euo pipefail
+
+          aws ecr get-login-password --region "${{ needs.deploy-infrastructure.outputs.aws_region }}" \
+            | docker login \
+              --username AWS \
+              --password-stdin "${{ needs.deploy-infrastructure.outputs.registry_url }}"
+
+      - name: Build Docker image with Docker Compose
+        working-directory: app
+        run: |
+          set -euo pipefail
+
+          docker compose build
+          docker image inspect "$LOCAL_IMAGE_NAME"
+
+      - name: Tag and push Docker image
+        id: image
+        run: |
+          set -euo pipefail
+
+          IMAGE_TAG="${GITHUB_SHA}"
+          IMAGE_URI="${{ needs.deploy-infrastructure.outputs.ecr_repository_url }}:${IMAGE_TAG}"
+          LATEST_IMAGE_URI="${{ needs.deploy-infrastructure.outputs.ecr_repository_url }}:latest"
+
+          docker tag "$LOCAL_IMAGE_NAME" "$IMAGE_URI"
+          docker tag "$LOCAL_IMAGE_NAME" "$LATEST_IMAGE_URI"
+
+          docker push "$IMAGE_URI"
+          docker push "$LATEST_IMAGE_URI"
+
+          echo "image_tag=$IMAGE_TAG" >> "$GITHUB_OUTPUT"
+          echo "image_uri=$IMAGE_URI" >> "$GITHUB_OUTPUT"
+
+  deploy-ecs-and-import-db:
+    runs-on: ubuntu-latest
+    needs:
+      - deploy-infrastructure
+      - build-and-push
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Terraform init infrastructure state for outputs
+        working-directory: terraform/infrastructure
+        run: |
+          set -euo pipefail
+
+          terraform init \
+            -backend-config="bucket=${{ needs.deploy-infrastructure.outputs.tf_state_bucket }}" \
+            -backend-config="key=customermanagementapp/infrastructure/terraform.tfstate" \
+            -backend-config="region=${{ env.AWS_REGION }}" \
+            -backend-config="use_lockfile=true"
+
+      - name: Read infrastructure outputs for ECS and DB import
+        id: infra
+        working-directory: terraform/infrastructure
+        run: |
+          set -euo pipefail
+
+          echo "aws_region=$(terraform output -raw aws_region)" >> "$GITHUB_OUTPUT"
+          echo "vpc_id=$(terraform output -raw vpc_id)" >> "$GITHUB_OUTPUT"
+          echo "internet_gateway_id=$(terraform output -raw internet_gateway_id)" >> "$GITHUB_OUTPUT"
+          echo "public_subnet_ids=$(terraform output -json public_subnet_ids)" >> "$GITHUB_OUTPUT"
+          echo "alb_security_group_id=$(terraform output -raw alb_security_group_id)" >> "$GITHUB_OUTPUT"
+          echo "rds_security_group_id=$(terraform output -raw rds_security_group_id)" >> "$GITHUB_OUTPUT"
+          echo "target_group_arn=$(terraform output -raw target_group_arn)" >> "$GITHUB_OUTPUT"
+          echo "alb_listener_arn=$(terraform output -raw alb_listener_arn)" >> "$GITHUB_OUTPUT"
+          echo "db_secret_arn=$(terraform output -raw db_secret_arn)" >> "$GITHUB_OUTPUT"
+          echo "app_base_url=$(terraform output -raw cloudfront_url)" >> "$GITHUB_OUTPUT"
+          echo "allowed_hostname=$(terraform output -raw cloudfront_domain_name)" >> "$GITHUB_OUTPUT"
+          echo "cognito_domain=$(terraform output -raw cognito_domain)" >> "$GITHUB_OUTPUT"
+          echo "cognito_user_pool_id=$(terraform output -raw cognito_user_pool_id)" >> "$GITHUB_OUTPUT"
+          echo "cognito_client_id=$(terraform output -raw cognito_user_pool_client_id)" >> "$GITHUB_OUTPUT"
+          echo "cognito_callback_url=$(terraform output -raw cognito_callback_url)" >> "$GITHUB_OUTPUT"
+          echo "cognito_logout_url=$(terraform output -raw cognito_logout_url)" >> "$GITHUB_OUTPUT"
+          echo "rds_endpoint=$(terraform output -raw rds_endpoint)" >> "$GITHUB_OUTPUT"
+          echo "db_name=$(terraform output -raw db_name)" >> "$GITHUB_OUTPUT"
+          echo "db_username=$(terraform output -raw db_username)" >> "$GITHUB_OUTPUT"
+          echo "temporary_ec2_ami_id=$(terraform output -raw temporary_ec2_ami_id)" >> "$GITHUB_OUTPUT"
+
+      - name: Terraform apply ECS service
+        working-directory: terraform/ecs-service
+        env:
+          TF_STATE_BUCKET: ${{ needs.deploy-infrastructure.outputs.tf_state_bucket }}
+          ECR_REPOSITORY_URL: ${{ needs.deploy-infrastructure.outputs.ecr_repository_url }}
+          IMAGE_TAG: ${{ needs.build-and-push.outputs.image_tag }}
+          VPC_ID: ${{ steps.infra.outputs.vpc_id }}
+          PUBLIC_SUBNET_IDS: ${{ steps.infra.outputs.public_subnet_ids }}
+          ALB_SECURITY_GROUP_ID: ${{ steps.infra.outputs.alb_security_group_id }}
+          RDS_SECURITY_GROUP_ID: ${{ steps.infra.outputs.rds_security_group_id }}
+          TARGET_GROUP_ARN: ${{ steps.infra.outputs.target_group_arn }}
+          ALB_LISTENER_ARN: ${{ steps.infra.outputs.alb_listener_arn }}
+          DB_SECRET_ARN: ${{ steps.infra.outputs.db_secret_arn }}
+          APP_BASE_URL: ${{ steps.infra.outputs.app_base_url }}
+          ALLOWED_HOSTNAME: ${{ steps.infra.outputs.allowed_hostname }}
+          COGNITO_DOMAIN: ${{ steps.infra.outputs.cognito_domain }}
+          COGNITO_USER_POOL_ID: ${{ steps.infra.outputs.cognito_user_pool_id }}
+          COGNITO_CLIENT_ID: ${{ steps.infra.outputs.cognito_client_id }}
+          COGNITO_CALLBACK_URL: ${{ steps.infra.outputs.cognito_callback_url }}
+          COGNITO_LOGOUT_URL: ${{ steps.infra.outputs.cognito_logout_url }}
+          SESSION_SECRET: ${{ secrets.SESSION_SECRET }}
+          CLOUDFRONT_SECRET: ${{ secrets.CLOUDFRONT_SECRET }}
+        run: |
+          set -euo pipefail
+
+          COGNITO_CLIENT_SECRET=$(terraform -chdir=../infrastructure output -raw cognito_user_pool_client_secret)
+          echo "::add-mask::$COGNITO_CLIENT_SECRET"
+          echo "::add-mask::$SESSION_SECRET"
+
+          terraform init \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="key=customermanagementapp/ecs-service/terraform.tfstate" \
+            -backend-config="region=${AWS_REGION}" \
+            -backend-config="use_lockfile=true"
+
+          terraform apply -auto-approve \
+            -var="ecr_repository_url=${ECR_REPOSITORY_URL}" \
+            -var="image_tag=${IMAGE_TAG}" \
+            -var="vpc_id=${VPC_ID}" \
+            -var="public_subnet_ids=${PUBLIC_SUBNET_IDS}" \
+            -var="alb_security_group_id=${ALB_SECURITY_GROUP_ID}" \
+            -var="rds_security_group_id=${RDS_SECURITY_GROUP_ID}" \
+            -var="target_group_arn=${TARGET_GROUP_ARN}" \
+            -var="alb_listener_arn=${ALB_LISTENER_ARN}" \
+            -var="db_secret_arn=${DB_SECRET_ARN}" \
+            -var="app_base_url=${APP_BASE_URL}" \
+            -var="allowed_hostname=${ALLOWED_HOSTNAME}" \
+            -var="cognito_domain=${COGNITO_DOMAIN}" \
+            -var="cognito_user_pool_id=${COGNITO_USER_POOL_ID}" \
+            -var="cognito_client_id=${COGNITO_CLIENT_ID}" \
+            -var="cognito_client_secret=${COGNITO_CLIENT_SECRET}" \
+            -var="cognito_callback_url=${COGNITO_CALLBACK_URL}" \
+            -var="cognito_logout_url=${COGNITO_LOGOUT_URL}" \
+            -var="session_secret=${SESSION_SECRET}" \
+            -var="cloudfront_secret=${CLOUDFRONT_SECRET}"
+
+      - name: Terraform apply temporary DB import stack
+        id: db_import_apply
+        working-directory: terraform/db-import
+        env:
+          TF_STATE_BUCKET: ${{ needs.deploy-infrastructure.outputs.tf_state_bucket }}
+          VPC_ID: ${{ steps.infra.outputs.vpc_id }}
+          INTERNET_GATEWAY_ID: ${{ steps.infra.outputs.internet_gateway_id }}
+          RDS_SECURITY_GROUP_ID: ${{ steps.infra.outputs.rds_security_group_id }}
+          DB_SECRET_ARN: ${{ steps.infra.outputs.db_secret_arn }}
+          DB_IMPORT_AMI_ID: ${{ steps.infra.outputs.temporary_ec2_ami_id }}
+        run: |
+          set -euo pipefail
+
+          terraform init \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="key=customermanagementapp/db-import/terraform.tfstate" \
+            -backend-config="region=${AWS_REGION}" \
+            -backend-config="use_lockfile=true"
+
+          terraform apply -auto-approve \
+            -var="vpc_id=${VPC_ID}" \
+            -var="internet_gateway_id=${INTERNET_GATEWAY_ID}" \
+            -var="rds_security_group_id=${RDS_SECURITY_GROUP_ID}" \
+            -var="db_secret_arn=${DB_SECRET_ARN}" \
+            -var="db_import_ami_id=${DB_IMPORT_AMI_ID}"
+
+      - name: Read DB import stack outputs
+        id: db_import
+        working-directory: terraform/db-import
+        run: |
+          set -euo pipefail
+
+          echo "aws_region=$(terraform output -raw aws_region)" >> "$GITHUB_OUTPUT"
+          echo "instance_id=$(terraform output -raw db_import_instance_id)" >> "$GITHUB_OUTPUT"
+          echo "public_subnet_id=$(terraform output -raw db_import_public_subnet_id)" >> "$GITHUB_OUTPUT"
+          echo "security_group_id=$(terraform output -raw db_import_security_group_id)" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for DB import EC2 to become ready in SSM
+        env:
+          AWS_REGION: ${{ steps.db_import.outputs.aws_region }}
+          EC2_INSTANCE_ID: ${{ steps.db_import.outputs.instance_id }}
+        run: |
+          set -euo pipefail
+
+          aws ec2 wait instance-running \
+            --region "$AWS_REGION" \
+            --instance-ids "$EC2_INSTANCE_ID"
+
+          aws ec2 wait instance-status-ok \
+            --region "$AWS_REGION" \
+            --instance-ids "$EC2_INSTANCE_ID"
+
+          for i in {1..30}; do
+            STATUS=$(aws ssm describe-instance-information \
+              --region "$AWS_REGION" \
+              --filters "Key=InstanceIds,Values=$EC2_INSTANCE_ID" \
+              --query 'InstanceInformationList[0].PingStatus' \
+              --output text 2>/dev/null || true)
+
+            if [ "$STATUS" = "Online" ]; then
+              echo "DB import EC2 instance is online in SSM."
+              exit 0
+            fi
+
+            echo "Current SSM status: $STATUS"
+            sleep 10
+          done
+
+          echo "DB import EC2 instance did not become Online in SSM."
+          exit 1
+
+      - name: Install MariaDB client, create DB, upload SQL, and import
+        env:
+          AWS_REGION: ${{ steps.db_import.outputs.aws_region }}
+          EC2_INSTANCE_ID: ${{ steps.db_import.outputs.instance_id }}
+          RDS_ENDPOINT: ${{ steps.infra.outputs.rds_endpoint }}
+          DB_SECRET_ARN: ${{ steps.infra.outputs.db_secret_arn }}
+          DB_NAME: ${{ steps.infra.outputs.db_name }}
+          DB_USERNAME: ${{ steps.infra.outputs.db_username }}
+        run: |
+          set -euo pipefail
+
+          if [ ! -f "$DB_SQL_FILE" ]; then
+            echo "SQL file not found: $DB_SQL_FILE"
+            exit 1
+          fi
+
+          run_ssm_params_file() {
+            local comment="$1"
+            local params_file="$2"
+
+            COMMAND_ID=$(aws ssm send-command \
+              --region "$AWS_REGION" \
+              --instance-ids "$EC2_INSTANCE_ID" \
+              --document-name "AWS-RunShellScript" \
+              --comment "$comment" \
+              --parameters "file://$params_file" \
+              --query 'Command.CommandId' \
+              --output text)
+
+            set +e
+            aws ssm wait command-executed \
+              --region "$AWS_REGION" \
+              --command-id "$COMMAND_ID" \
+              --instance-id "$EC2_INSTANCE_ID"
+            WAIT_STATUS=$?
+            set -e
+
+            aws ssm get-command-invocation \
+              --region "$AWS_REGION" \
+              --command-id "$COMMAND_ID" \
+              --instance-id "$EC2_INSTANCE_ID" \
+              --query '{Status:Status,Stdout:StandardOutputContent,Stderr:StandardErrorContent}' \
+              --output json
+
+            if [ "$WAIT_STATUS" -ne 0 ]; then
+              exit "$WAIT_STATUS"
+            fi
+          }
+
+          make_params_file() {
+            local params_file="$1"
+            shift
+            python3 - "$params_file" "$@" <<'PY'
+          import json
+          import sys
+
+          params_file = sys.argv[1]
+          commands = list(sys.argv[2:])
+          with open(params_file, "w", encoding="utf-8") as f:
+              json.dump({"commands": commands}, f)
+          PY
+          }
+
+          upload_file_to_ec2() {
+            local local_file="$1"
+            local remote_file="$2"
+            local remote_b64="${remote_file}.b64"
+            local tmp_dir
+            tmp_dir=$(mktemp -d)
+
+            base64 -w 0 "$local_file" > "$tmp_dir/file.b64"
+            split -b 6000 "$tmp_dir/file.b64" "$tmp_dir/chunk_"
+
+            make_params_file "$tmp_dir/clear.json" \
+              "set -euo pipefail" \
+              "rm -f '$remote_b64' '$remote_file'"
+            run_ssm_params_file "Clear remote file $remote_file" "$tmp_dir/clear.json"
+
+            for chunk in "$tmp_dir"/chunk_*; do
+              python3 - "$chunk" "$remote_b64" "$tmp_dir/append.json" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          chunk_file = pathlib.Path(sys.argv[1])
+          remote_b64 = sys.argv[2]
+          params_file = sys.argv[3]
+          content = chunk_file.read_text(encoding="utf-8")
+          command = f"cat >> '{remote_b64}' <<'EOF'\n{content}\nEOF"
+          with open(params_file, "w", encoding="utf-8") as f:
+              json.dump({"commands": ["set -euo pipefail", command]}, f)
+          PY
+              run_ssm_params_file "Upload chunk to $remote_file" "$tmp_dir/append.json"
+            done
+
+            make_params_file "$tmp_dir/decode.json" \
+              "set -euo pipefail" \
+              "base64 -d '$remote_b64' > '$remote_file'" \
+              "chmod 600 '$remote_file'" \
+              "rm -f '$remote_b64'"
+            run_ssm_params_file "Decode remote file $remote_file" "$tmp_dir/decode.json"
+
+            rm -rf "$tmp_dir"
+          }
+
+          cat > /tmp/create-db.sh <<'SCRIPT'
+          #!/bin/bash
+          set -euo pipefail
+
+          export AWS_DEFAULT_REGION="__AWS_REGION__"
+          RDS_ENDPOINT="__RDS_ENDPOINT__"
+          DB_SECRET_ARN="__DB_SECRET_ARN__"
+          DB_NAME="__DB_NAME__"
+          DB_USERNAME="__DB_USERNAME__"
+
+          if ! command -v mysql >/dev/null 2>&1; then
+            sudo dnf install -y awscli mariadb105 || sudo dnf install -y awscli mariadb || sudo yum install -y awscli mariadb
+          fi
+
+          SECRET_JSON="$(aws secretsmanager get-secret-value --secret-id "$DB_SECRET_ARN" --query SecretString --output text)"
+          DB_PASSWORD="$(SECRET_JSON="$SECRET_JSON" python3 -c 'import json, os; print(json.loads(os.environ["SECRET_JSON"])["password"])')"
+
+          mysql -h "$RDS_ENDPOINT" -u "$DB_USERNAME" -p"$DB_PASSWORD" -e "CREATE DATABASE IF NOT EXISTS \`$DB_NAME\`;"
+          SCRIPT
+
+          sed -i \
+            -e "s|__AWS_REGION__|$AWS_REGION|g" \
+            -e "s|__RDS_ENDPOINT__|$RDS_ENDPOINT|g" \
+            -e "s|__DB_SECRET_ARN__|$DB_SECRET_ARN|g" \
+            -e "s|__DB_NAME__|$DB_NAME|g" \
+            -e "s|__DB_USERNAME__|$DB_USERNAME|g" \
+            /tmp/create-db.sh
+
+          upload_file_to_ec2 /tmp/create-db.sh /tmp/create-db.sh
+          make_params_file /tmp/run-create-db.json \
+            "set -euo pipefail" \
+            "chmod +x /tmp/create-db.sh" \
+            "sudo /tmp/create-db.sh"
+          run_ssm_params_file "Install MariaDB and create database" /tmp/run-create-db.json
+
+          upload_file_to_ec2 "$DB_SQL_FILE" /tmp/db_health.sql
+
+          cat > /tmp/import-db.sh <<'SCRIPT'
+          #!/bin/bash
+          set -euo pipefail
+
+          export AWS_DEFAULT_REGION="__AWS_REGION__"
+          RDS_ENDPOINT="__RDS_ENDPOINT__"
+          DB_SECRET_ARN="__DB_SECRET_ARN__"
+          DB_NAME="__DB_NAME__"
+          DB_USERNAME="__DB_USERNAME__"
+
+          SECRET_JSON="$(aws secretsmanager get-secret-value --secret-id "$DB_SECRET_ARN" --query SecretString --output text)"
+          DB_PASSWORD="$(SECRET_JSON="$SECRET_JSON" python3 -c 'import json, os; print(json.loads(os.environ["SECRET_JSON"])["password"])')"
+
+          mysql -h "$RDS_ENDPOINT" -u "$DB_USERNAME" -p"$DB_PASSWORD" "$DB_NAME" < /tmp/db_health.sql
+          SCRIPT
+
+          sed -i \
+            -e "s|__AWS_REGION__|$AWS_REGION|g" \
+            -e "s|__RDS_ENDPOINT__|$RDS_ENDPOINT|g" \
+            -e "s|__DB_SECRET_ARN__|$DB_SECRET_ARN|g" \
+            -e "s|__DB_NAME__|$DB_NAME|g" \
+            -e "s|__DB_USERNAME__|$DB_USERNAME|g" \
+            /tmp/import-db.sh
+
+          upload_file_to_ec2 /tmp/import-db.sh /tmp/import-db.sh
+          make_params_file /tmp/run-import-db.json \
+            "set -euo pipefail" \
+            "chmod +x /tmp/import-db.sh" \
+            "sudo /tmp/import-db.sh"
+          run_ssm_params_file "Import db/db_health.sql into RDS" /tmp/run-import-db.json
+
+      - name: Destroy temporary DB import Terraform stack – EC2 and public subnets
+        if: always() && steps.db_import.outputs.instance_id != ''
+        working-directory: terraform/db-import
+        env:
+          TF_STATE_BUCKET: ${{ needs.deploy-infrastructure.outputs.tf_state_bucket }}
+          VPC_ID: ${{ steps.infra.outputs.vpc_id }}
+          INTERNET_GATEWAY_ID: ${{ steps.infra.outputs.internet_gateway_id }}
+          RDS_SECURITY_GROUP_ID: ${{ steps.infra.outputs.rds_security_group_id }}
+          DB_SECRET_ARN: ${{ steps.infra.outputs.db_secret_arn }}
+          DB_IMPORT_AMI_ID: ${{ steps.infra.outputs.temporary_ec2_ami_id }}
+        run: |
+          set +e
+
+          terraform init \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="key=customermanagementapp/db-import/terraform.tfstate" \
+            -backend-config="region=${AWS_REGION}" \
+            -backend-config="use_lockfile=true"
+
+          terraform destroy -auto-approve \
+            -var="vpc_id=${VPC_ID}" \
+            -var="internet_gateway_id=${INTERNET_GATEWAY_ID}" \
+            -var="rds_security_group_id=${RDS_SECURITY_GROUP_ID}" \
+            -var="db_secret_arn=${DB_SECRET_ARN}" \
+            -var="db_import_ami_id=${DB_IMPORT_AMI_ID}"
+

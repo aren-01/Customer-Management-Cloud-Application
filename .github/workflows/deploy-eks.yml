@@ -3,8 +3,293 @@ name: Deploy Customer Management App with Kubernetes
 on:
   workflow_dispatch:
 
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  COMPOSE_PROJECT_NAME: app
+  LOCAL_IMAGE_NAME: app-app:latest
+  TF_STATE_BUCKET: cma02-tfstate-${{ github.repository_owner }}
+  ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
+
 jobs:
-  placeholder-job:
+  
+  deploy-infrastructure:
     runs-on: ubuntu-latest
+    outputs:
+      aws_region: ${{ steps.infra_outputs.outputs.aws_region }}
+      ecr_repository_url: ${{ steps.infra_outputs.outputs.ecr_repository_url }}
+      registry_url: ${{ steps.infra_outputs.outputs.registry_url }}
+      tf_state_bucket: ${{ steps.tfstate.outputs.bucket_name }}
+      eks_cluster_name: ${{ steps.infra_outputs.outputs.eks_cluster_name }}
+      cloudfront_distribution_id: ${{ steps.infra_outputs.outputs.cloudfront_distribution_id }}
+      external_secrets_role_arn: ${{ steps.infra_outputs.outputs.external_secrets_role_arn }}
     steps:
-      - run: echo "This is a placeholder so GitHub shows the Run button!"
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Create Terraform state bucket if it does not exist
+        id: tfstate
+        run: |
+          set -euo pipefail
+
+          BUCKET_NAME=$(echo "${TF_STATE_BUCKET}" | tr '[:upper:]' '[:lower:]' | tr '_' '-')
+
+          echo "Using Terraform state bucket: $BUCKET_NAME"
+          echo "bucket_name=$BUCKET_NAME" >> "$GITHUB_OUTPUT"
+
+          if aws s3api head-bucket --bucket "$BUCKET_NAME" 2>/dev/null; then
+            echo "Terraform state bucket already exists."
+          else
+            echo "Creating Terraform state bucket..."
+
+            aws s3api create-bucket \
+              --bucket "$BUCKET_NAME" \
+              --region "${AWS_REGION}"
+
+            aws s3api put-bucket-versioning \
+              --bucket "$BUCKET_NAME" \
+              --versioning-configuration Status=Enabled
+
+            aws s3api put-public-access-block \
+              --bucket "$BUCKET_NAME" \
+              --public-access-block-configuration \
+              BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+
+            aws s3api put-bucket-encryption \
+              --bucket "$BUCKET_NAME" \
+              --server-side-encryption-configuration '{
+                "Rules": [
+                  {
+                    "ApplyServerSideEncryptionByDefault": {
+                      "SSEAlgorithm": "AES256"
+                    }
+                  }
+                ]
+              }'
+          fi
+
+      - name: Terraform init 
+        working-directory: terraform/eks-service
+        run: |
+          set -euo pipefail
+
+          terraform init \
+            -backend-config="bucket=${{ steps.tfstate.outputs.bucket_name }}" \
+            -backend-config="key=customermanagementapp/eks-service/terraform.tfstate" \
+            -backend-config="region=${{ env.AWS_REGION }}" \
+            -backend-config="use_lockfile=true"
+
+      - name: Terraform apply 
+        working-directory: terraform/eks-service
+        env:
+          TF_VAR_cloudfront_secret: ${{ secrets.CLOUDFRONT_SECRET }}
+          TF_VAR_db_user: ${{ secrets.DB_USER }}
+          TF_VAR_db_pass: ${{ secrets.DB_PASS }}
+          TF_VAR_session_secret: ${{ secrets.SESSION_SECRET }}
+        run: |
+          set -euo pipefail
+          
+          terraform apply -auto-approve
+
+      - name: Read infrastructure outputs needed for image build and EKS
+        id: infra_outputs
+        working-directory: terraform/eks-service
+        run: |
+          set -euo pipefail
+
+          ECR_REPOSITORY_URL=$(terraform output -raw ecr_repository_url)
+          REGISTRY_URL=$(echo "$ECR_REPOSITORY_URL" | cut -d/ -f1)
+          EKS_CLUSTER_NAME=$(terraform output -raw eks_cluster_name)
+          CLOUDFRONT_DIST_ID=$(terraform output -raw cloudfront_distribution_id 2>/dev/null || echo "")
+          EXT_SECRETS_ROLE_ARN=$(terraform output -raw external_secrets_role_arn 2>/dev/null || echo "")
+
+          echo "aws_region=$(terraform output -raw aws_region)" >> "$GITHUB_OUTPUT"
+          echo "ecr_repository_url=$ECR_REPOSITORY_URL" >> "$GITHUB_OUTPUT"
+          echo "registry_url=$REGISTRY_URL" >> "$GITHUB_OUTPUT"
+          echo "eks_cluster_name=$EKS_CLUSTER_NAME" >> "$GITHUB_OUTPUT"
+          echo "cloudfront_distribution_id=$CLOUDFRONT_DIST_ID" >> "$GITHUB_OUTPUT"
+          echo "external_secrets_role_arn=$EXT_SECRETS_ROLE_ARN" >> "$GITHUB_OUTPUT"
+
+  
+  build-and-push:
+    runs-on: ubuntu-latest
+    needs: deploy-infrastructure
+
+    outputs:
+      image_tag: ${{ steps.image.outputs.image_tag }}
+      image_uri: ${{ steps.image.outputs.image_uri }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ needs.deploy-infrastructure.outputs.aws_region }}
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+
+      - name: Login to Amazon ECR
+        run: |
+          set -euo pipefail
+
+          aws ecr get-login-password --region "${{ needs.deploy-infrastructure.outputs.aws_region }}" \
+            | docker login \
+              --username AWS \
+              --password-stdin "${{ needs.deploy-infrastructure.outputs.registry_url }}"
+
+      - name: Build Docker image with Docker Compose
+        working-directory: app
+        run: |
+          set -euo pipefail
+
+          docker compose build
+          docker image inspect "$LOCAL_IMAGE_NAME"
+
+      - name: Tag and push Docker image
+        id: image
+        run: |
+          set -euo pipefail
+
+          IMAGE_TAG="${GITHUB_SHA}"
+          IMAGE_URI="${{ needs.deploy-infrastructure.outputs.ecr_repository_url }}:${IMAGE_TAG}"
+          LATEST_IMAGE_URI="${{ needs.deploy-infrastructure.outputs.ecr_repository_url }}:latest"
+
+          docker tag "$LOCAL_IMAGE_NAME" "$IMAGE_URI"
+          docker tag "$LOCAL_IMAGE_NAME" "$LATEST_IMAGE_URI"
+
+          docker push "$IMAGE_URI"
+          docker push "$LATEST_IMAGE_URI"
+
+          echo "image_tag=$IMAGE_TAG" >> "$GITHUB_OUTPUT"
+          echo "image_uri=$IMAGE_URI" >> "$GITHUB_OUTPUT"
+
+  
+  deploy-kubernetes:
+    runs-on: ubuntu-latest
+    needs:
+      - deploy-infrastructure
+      - build-and-push
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: 'latest'
+
+      - name: Install ESO & Deploy Application Helm Chart
+        env:
+          CLUSTER_NAME: ${{ needs.deploy-infrastructure.outputs.eks_cluster_name }}
+          ECR_REPOSITORY: ${{ needs.deploy-infrastructure.outputs.ecr_repository_url }}
+          IMAGE_TAG: ${{ needs.build-and-push.outputs.image_tag }}
+          EXT_SECRETS_ROLE_ARN: ${{ needs.deploy-infrastructure.outputs.external_secrets_role_arn }}
+        run: |
+          set -euo pipefail
+
+          # 1. Authenticate kubectl with the EKS cluster
+          aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name "$CLUSTER_NAME"
+
+          # 2. Install/Upgrade External Secrets Operator Controller
+          helm repo add external-secrets https://charts.external-secrets.io
+          helm repo update
+          helm upgrade --install external-secrets external-secrets/external-secrets \
+            --namespace external-secrets \
+            --create-namespace \
+            --set installCRDs=true \
+            --wait
+
+          # 3. Wait for Kubernetes API server to establish discovery schemas for the new CRDs
+          echo "Waiting for External Secrets CRDs to be established..."
+          kubectl wait --for=condition=established --timeout=60s crd/externalsecrets.external-secrets.io
+          kubectl wait --for=condition=established --timeout=60s crd/secretstores.external-secrets.io
+
+                   
+          echo "Copying db directory to helm-chart/db..."
+          cp -r ./db ./helm-chart/db
+
+          # 4. Deploy App Helm Chart (located at ./helm-chart)
+          helm upgrade --install customer-management-app ./helm-chart \
+            --namespace default \
+            --create-namespace \
+            --set app.image.repository="$ECR_REPOSITORY" \
+            --set app.image.tag="$IMAGE_TAG" \
+            --set serviceAccount.roleArn="$EXT_SECRETS_ROLE_ARN" \
+            --wait \
+            --timeout 5m0s
+
+      - name: Automatically Update CloudFront Origin with LoadBalancer URL
+        env:
+          DIST_ID: ${{ needs.deploy-infrastructure.outputs.cloudfront_distribution_id }}
+        run: |
+          set -euo pipefail
+          
+          if [ -z "$DIST_ID" ]; then
+            echo "CloudFront Distribution ID output not found in Terraform. Skipping automated update."
+            exit 0
+          fi
+
+          echo "Waiting for LoadBalancer hostname/IP to become available..."
+          LB_URL=""
+          for i in {1..30}; do
+            LB_URL=$(kubectl get svc app-service -n default -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
+            
+            # Fallback if AWS returns an IP address instead of a hostname
+            if [ -z "$LB_URL" ]; then
+              LB_URL=$(kubectl get svc app-service -n default -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
+            fi
+
+            if [ -n "$LB_URL" ]; then
+              break
+            fi
+            echo "Attempt $i: LoadBalancer not ready yet, waiting 10 seconds..."
+            sleep 10
+          done
+
+          if [ -z "$LB_URL" ]; then
+            echo "Error: Timed out waiting for LoadBalancer URL."
+            echo "Debugging info:"
+            kubectl get svc app-service -n default -o yaml || true
+            exit 1
+          fi
+
+          echo "Found LoadBalancer URL: $LB_URL"
+          echo "Updating CloudFront distribution $DIST_ID..."
+
+          aws cloudfront get-distribution-config --id "$DIST_ID" > cf-config.json
+          ETAG=$(jq -r '.ETag' cf-config.json)
+          jq '.DistributionConfig' cf-config.json > cf-spec.json
+
+          # Update the custom origin domain name dynamically
+          jq --arg url "$LB_URL" '.Origins.Items[0].DomainName = $url' cf-spec.json > cf-spec-updated.json
+
+          aws cloudfront update-distribution \
+            --id "$DIST_ID" \
+            --distribution-config file://cf-spec-updated.json \
+            --if-match "$ETAG"
+
+          echo "Successfully updated CloudFront origin domain to: $LB_URL"
+
