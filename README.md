@@ -79,9 +79,9 @@ Please also fill the secrets below instead of DB_PASSWORD, if you deploy the EKS
 
 IMPORTANT NOTE ON CONTAINERS IN PUBLIC SUBNETS: Since ALB domain does not work with ACM to use an SSL certificate and I deploy it on AWS Free Tier without a domain, I used CloudFront and Public ECS tasks in the system to integrate Cognito. Otherwise, even if this is deployed in CloudFront, Cognito receives the url in ALB; therefore it fails. Because of this issue, I used public subnets. In a real production environment keep ECS and EKS tasks in a private subnet with a custom domain.
 
-## Status Badge
-
-
+## Status Badges
+[![Deploy Customer Management App with Kubernetes](https://github.com/aren-01/Customer-Management-Cloud-Application/actions/workflows/deploy-eks.yml/badge.svg)](https://github.com/aren-01/Customer-Management-Cloud-Application/actions/workflows/deploy-eks.yml)
+[![Destroy Customer Management Infrastructure – EKS Version](https://github.com/aren-01/Customer-Management-Cloud-Application/actions/workflows/destroy-eks.yml/badge.svg)](https://github.com/aren-01/Customer-Management-Cloud-Application/actions/workflows/destroy-eks.yml)
 ## Screenshots
 
 ![](./images/image5.png)
